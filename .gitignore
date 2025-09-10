@@ -1,0 +1,18 @@
+# Binaries
+octojoin
+octojoin.exe
+
+# Configuration files (contains sensitive API keys)
+config.yaml
+config.yml
+config.*.yaml
+config.*.yml
+*.config.yaml
+*.config.yml
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db

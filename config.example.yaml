@@ -1,0 +1,61 @@
+# OctoJoin Configuration File
+# Copy this to config.yaml and update with your credentials
+#
+# Configuration precedence (highest to lowest):
+# 1. Command line arguments
+# 2. Environment variables (OCTOPUS_ACCOUNT_ID, OCTOPUS_API_KEY)
+# 3. Configuration file values
+
+# ====================================
+# Required: Octopus Energy Credentials
+# ====================================
+
+# Your Octopus Energy Account ID (found in your account dashboard)
+account_id: "A-1234ABCD"
+
+# Your Octopus Energy API Key (found in account settings -> API section)
+api_key: "sk_live_xxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ===============================
+# Operation Mode Configuration
+# ===============================
+
+# Run in daemon mode (continuous monitoring) vs one-shot mode
+# true  = Run continuously, checking every few minutes
+# false = Run once, check for sessions, then exit (good for cron jobs)
+daemon: true
+
+# Minutes between checks in daemon mode (default: 10)
+# Lower values = more frequent checks but more API calls
+# Recommended: 10-15 minutes to respect API limits
+check_interval_minutes: 10
+
+# =============================
+# Session Filtering Options
+# =============================
+
+# Minimum points threshold to join a saving session
+# 0    = Join all sessions regardless of points
+# 100  = Only join sessions worth 100+ points
+# 500+ = Only join high-value sessions
+min_points: 0
+
+# ===================
+# Web UI Dashboard
+# ===================
+
+# Enable web UI dashboard (requires daemon mode)
+# Provides real-time monitoring with live countdowns
+web_ui: true
+
+# Web UI port (default: 8080)
+# Change this if port 8080 is already in use
+web_port: 8080
+
+# ==================
+# Debugging Options
+# ==================
+
+# Enable debug logging for troubleshooting
+# Shows detailed API requests, JWT token info, and internal operations
+debug: false
