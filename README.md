@@ -234,3 +234,13 @@ In daemon mode, free electricity sessions will only alert at key intervals to av
 - **Final Alert**: 15 minutes before start or when active
 
 In one-shot mode, relevant sessions are always displayed.
+
+## Disclaimer
+
+This is an unofficial third-party application developed independently. "Octopus Energy" is a trademark of Octopus Energy Group Limited. This application is not affiliated with, endorsed by, or connected to Octopus Energy Group Limited in any way.
+
+The application interacts with publicly documented Octopus Energy APIs for personal account management purposes. Users are responsible for ensuring their use complies with Octopus Energy's terms of service.
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.

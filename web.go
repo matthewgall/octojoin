@@ -267,6 +267,13 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
             opacity: 0.7;
         }
         
+        .footer .disclaimer {
+            font-size: 0.8rem;
+            opacity: 0.6;
+            margin-top: 10px;
+            line-height: 1.4;
+        }
+        
         .loading {
             text-align: center;
             font-size: 1.2rem;
@@ -358,6 +365,11 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
         
         <div class="footer">
             <p>Auto-refreshing every 30 seconds</p>
+            <p class="disclaimer">
+                This is an unofficial third-party application. 
+                "Octopus Energy" is a trademark of Octopus Energy Group Limited. 
+                This application is not affiliated with, endorsed by, or connected to Octopus Energy.
+            </p>
         </div>
     </div>
 
