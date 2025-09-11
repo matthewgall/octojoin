@@ -1,0 +1,35 @@
+[Unit]
+Description=OctoJoin - Octopus Energy Session Monitor
+Documentation=https://github.com/matthewgall/octojoin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=octojoin
+Group=octojoin
+WorkingDirectory=/opt/octojoin
+ExecStart=/opt/octojoin/octojoin -config=/opt/octojoin/config.yaml
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/octojoin
+StateDirectory=octojoin
+StateDirectoryMode=0755
+
+# Environment
+Environment=HOME=/var/lib/octojoin
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=octojoin
+
+[Install]
+WantedBy=multi-user.target

@@ -130,6 +130,77 @@ export OCTOPUS_API_KEY=sk_live_xxx
 1. **Account ID**: Found in your Octopus Energy account dashboard
 2. **API Key**: Available in your account settings under the API section
 
+## System Service Installation (Linux)
+
+For continuous monitoring on Linux servers, you can install OctoJoin as a systemd service:
+
+### Installation Steps
+
+1. **Create system user and directories:**
+   ```bash
+   sudo useradd --system --create-home --home-dir /var/lib/octojoin --shell /bin/false octojoin
+   sudo mkdir -p /opt/octojoin
+   ```
+
+2. **Install the binary:**
+   ```bash
+   sudo cp octojoin /opt/octojoin/
+   sudo chown root:root /opt/octojoin/octojoin
+   sudo chmod 755 /opt/octojoin/octojoin
+   ```
+
+3. **Create configuration:**
+   ```bash
+   sudo cp config.example.yaml /opt/octojoin/config.yaml
+   sudo chown root:octojoin /opt/octojoin/config.yaml
+   sudo chmod 640 /opt/octojoin/config.yaml
+   # Edit the configuration with your credentials
+   sudo nano /opt/octojoin/config.yaml
+   ```
+
+4. **Install and start the service:**
+   ```bash
+   sudo cp octojoin.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable octojoin
+   sudo systemctl start octojoin
+   ```
+
+5. **Check service status:**
+   ```bash
+   sudo systemctl status octojoin
+   sudo journalctl -u octojoin -f  # Follow logs
+   ```
+
+### Service Management
+
+```bash
+# Start/stop/restart the service
+sudo systemctl start octojoin
+sudo systemctl stop octojoin
+sudo systemctl restart octojoin
+
+# Check status and logs
+sudo systemctl status octojoin
+sudo journalctl -u octojoin --since "1 hour ago"
+
+# Disable/enable auto-start
+sudo systemctl disable octojoin
+sudo systemctl enable octojoin
+```
+
+### Web Dashboard Access
+
+If you enabled the web UI in `/etc/octojoin/config.yaml`, access it at:
+- `http://your-server:8080` (or your configured port)
+
+### Security Notes
+
+- The service runs as a dedicated `octojoin` user with restricted permissions
+- Configuration files should be readable only by root and the octojoin group
+- State files are stored in `/var/lib/octojoin/` with appropriate permissions
+- The service uses systemd security features like `NoNewPrivileges` and `ProtectSystem`
+
 ## Features
 
 ### Core Functionality
@@ -234,6 +305,38 @@ In daemon mode, free electricity sessions will only alert at key intervals to av
 - **Final Alert**: 15 minutes before start or when active
 
 In one-shot mode, relevant sessions are always displayed.
+
+## Support the Project
+
+If you find OctoJoin useful, here are some ways to support its continued development:
+
+### 💷 Join Octopus Energy
+
+Not an Octopus Energy customer yet? Use my referral link to join and we'll both get £50 credit:
+
+**[Join Octopus Energy - Get £50 credit](https://share.octopus.energy/maize-ape-570)**
+
+This helps fund development of OctoJoin and you'll get access to:
+- Saving Sessions (earn money for reducing usage during peak times)
+- Free electricity sessions (completely free electricity during certain periods)
+- Competitive energy rates and excellent customer service
+- The greenest energy supplier in the UK
+
+### ❤️ GitHub Sponsor
+
+Support ongoing development and maintenance:
+
+**[Become a GitHub Sponsor](https://github.com/sponsors/matthewgall)**
+
+Your sponsorship helps with:
+- Adding new features and improvements
+- Maintaining compatibility with API changes  
+- Providing support and bug fixes
+- Keeping the project free and open source
+
+### ⭐ Star the Repository
+
+Show your appreciation by starring the repository on GitHub - it helps others discover the project!
 
 ## Disclaimer
 
