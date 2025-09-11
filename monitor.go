@@ -134,6 +134,20 @@ func (m *SavingSessionMonitor) checkSavingSessions() {
 
 	log.Printf("Current points in wallet: %d", response.Data.OctoPoints.Account.CurrentPointsInWallet)
 
+	// Get and display Wheel of Fortune spins
+	spins, err := m.client.getWheelOfFortuneSpins()
+	if err != nil {
+		log.Printf("Warning: Could not get Wheel of Fortune spins: %v", err)
+	} else {
+		totalSpins := spins.ElectricitySpins + spins.GasSpins
+		if totalSpins > 0 {
+			log.Printf("🎰 Wheel of Fortune spins available: %d (Electricity: %d, Gas: %d)", 
+				totalSpins, spins.ElectricitySpins, spins.GasSpins)
+		} else {
+			log.Printf("🎰 No Wheel of Fortune spins available")
+		}
+	}
+
 	for _, session := range response.Data.SavingSessions.Account.JoinedEvents {
 		if !m.state.KnownSessions[session.EventID] {
 			now := time.Now()

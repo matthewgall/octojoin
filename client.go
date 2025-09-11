@@ -24,8 +24,25 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
+
+// API endpoints
+var octopusEndpoints = map[string]string{
+	"api":             "https://api.octopus.energy/v1",
+	"graphql":         "https://api.octopus.energy/v1/graphql/",
+	"backend-graphql": "https://api.backend.octopus.energy/v1/graphql/",
+}
+
+// Helper function to get endpoint URLs
+func getEndpoint(key string) string {
+	if url, exists := octopusEndpoints[key]; exists {
+		return url
+	}
+	// Fallback to main API if key doesn't exist
+	return octopusEndpoints["api"]
+}
 
 type OctopusClient struct {
 	AccountID      string
@@ -58,6 +75,11 @@ type FreeElectricitySessionsResponse struct {
 	Data []FreeElectricitySession `json:"data"`
 }
 
+type WheelOfFortuneSpins struct {
+	ElectricitySpins int `json:"electricity_spins"`
+	GasSpins        int `json:"gas_spins"`
+}
+
 type SavingSessionsResponse struct {
 	Data struct {
 		SavingSessions struct {
@@ -78,7 +100,7 @@ func NewOctopusClient(accountID, apiKey string, debug bool) *OctopusClient {
 	return &OctopusClient{
 		AccountID:   accountID,
 		APIKey:      apiKey,
-		BaseURL:     "https://api.octopus.energy/v1",
+		BaseURL:     getEndpoint("api"),
 		minInterval: 1 * time.Second,
 		maxRetries:  3,
 		debug:       debug,
@@ -107,6 +129,91 @@ func (c *OctopusClient) saveJWTToState() {
 		c.state.JWTTokenExpiry = c.jwtExpiry
 		c.debugLog("Saved JWT token to state, expires: %v", c.jwtExpiry)
 	}
+}
+
+func (c *OctopusClient) invalidateJWTToken() {
+	c.debugLog("Invalidating expired JWT token")
+	c.jwtToken = ""
+	c.jwtExpiry = time.Time{}
+	if c.state != nil {
+		c.state.JWTToken = ""
+		c.state.JWTTokenExpiry = time.Time{}
+	}
+}
+
+func (c *OctopusClient) makeGraphQLRequest(query string, variables map[string]interface{}, retryOnAuth bool) (*http.Response, error) {
+	return c.makeGraphQLRequestWithEndpoint(getEndpoint("graphql"), query, variables, retryOnAuth, "")
+}
+
+func (c *OctopusClient) makeGraphQLRequestWithEndpoint(endpoint, query string, variables map[string]interface{}, retryOnAuth bool, operationName string) (*http.Response, error) {
+	if err := c.refreshJWTToken(); err != nil {
+		return nil, fmt.Errorf("failed to get JWT token: %w", err)
+	}
+
+	requestBody := GraphQLRequest{
+		Query:         query,
+		Variables:     variables,
+		OperationName: operationName,
+	}
+
+	bodyBytes, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", c.jwtToken)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+
+	// Check for authentication errors that indicate token expiration
+	if (resp.StatusCode == 401 || resp.StatusCode == 403) && retryOnAuth {
+		resp.Body.Close()
+		c.debugLog("Got %d response, JWT token may be expired. Invalidating and retrying...", resp.StatusCode)
+		c.invalidateJWTToken()
+		
+		// Retry once with fresh token
+		return c.makeGraphQLRequestWithEndpoint(endpoint, query, variables, false, operationName)
+	}
+
+	// For GraphQL, we also need to check for JWT expiration in the response body
+	if resp.StatusCode == 200 && retryOnAuth {
+		// Read the response body to check for JWT expiration errors
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return resp, nil // Return original response if we can't read body
+		}
+		resp.Body.Close()
+
+		// Check if the response contains JWT expiration error
+		bodyStr := string(bodyBytes)
+		if strings.Contains(bodyStr, "Signature of the JWT has expired") || 
+		   strings.Contains(bodyStr, "JWT has expired") ||
+		   strings.Contains(bodyStr, "Token has expired") ||
+		   strings.Contains(bodyStr, "KT-CT-1139") || // Octopus specific auth error code
+		   strings.Contains(bodyStr, "KT-CT-1143") || // Invalid authorization header error
+		   strings.Contains(bodyStr, "Authentication failed") {
+			c.debugLog("GraphQL response contains JWT expiration/auth error. Invalidating token and retrying...")
+			c.debugLog("Error details: %s", bodyStr)
+			c.invalidateJWTToken()
+			
+			// Retry once with fresh token
+			return c.makeGraphQLRequestWithEndpoint(endpoint, query, variables, false, operationName)
+		}
+
+		// Create new response with the body we read
+		resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	}
+
+	return resp, nil
 }
 
 func (c *OctopusClient) debugLog(format string, args ...interface{}) {
@@ -204,12 +311,6 @@ func (c *OctopusClient) GetSavingSessions() (*SavingSessionsResponse, error) {
 }
 
 func (c *OctopusClient) checkSavingSessionCampaign() bool {
-	// Ensure we have a valid JWT token
-	if err := c.refreshJWTToken(); err != nil {
-		c.debugLog("Failed to get JWT token for campaign check: %v", err)
-		return false
-	}
-
 	query := `query checkCampaigns($accountNumber: String!) {
 		account(accountNumber: $accountNumber) {
 			campaigns {
@@ -218,29 +319,11 @@ func (c *OctopusClient) checkSavingSessionCampaign() bool {
 		}
 	}`
 
-	requestBody := GraphQLRequest{
-		Query: query,
-		Variables: map[string]interface{}{
-			"accountNumber": c.AccountID,
-		},
+	variables := map[string]interface{}{
+		"accountNumber": c.AccountID,
 	}
 
-	reqBody, err := json.Marshal(requestBody)
-	if err != nil {
-		c.debugLog("Failed to marshal campaign request: %v", err)
-		return false
-	}
-
-	req, err := http.NewRequest("POST", "https://api.octopus.energy/v1/graphql/", bytes.NewBuffer(reqBody))
-	if err != nil {
-		c.debugLog("Failed to create campaign request: %v", err)
-		return false
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", c.jwtToken)
-
-	resp, err := c.client.Do(req)
+	resp, err := c.makeGraphQLRequest(query, variables, true)
 	if err != nil {
 		c.debugLog("Failed to execute campaign request: %v", err)
 		return false
@@ -280,11 +363,6 @@ func (c *OctopusClient) checkSavingSessionCampaign() bool {
 }
 
 func (c *OctopusClient) getCampaignStatus() (map[string]bool, error) {
-	// Ensure we have a valid JWT token
-	if err := c.refreshJWTToken(); err != nil {
-		return nil, fmt.Errorf("failed to get JWT token for campaign check: %w", err)
-	}
-
 	query := `query checkCampaigns($accountNumber: String!) {
 		account(accountNumber: $accountNumber) {
 			campaigns {
@@ -293,27 +371,11 @@ func (c *OctopusClient) getCampaignStatus() (map[string]bool, error) {
 		}
 	}`
 
-	requestBody := GraphQLRequest{
-		Query: query,
-		Variables: map[string]interface{}{
-			"accountNumber": c.AccountID,
-		},
+	variables := map[string]interface{}{
+		"accountNumber": c.AccountID,
 	}
 
-	reqBody, err := json.Marshal(requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal campaign request: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", "https://api.octopus.energy/v1/graphql/", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create campaign request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", c.jwtToken)
-
-	resp, err := c.client.Do(req)
+	resp, err := c.makeGraphQLRequest(query, variables, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute campaign request: %w", err)
 	}
@@ -353,8 +415,9 @@ func (c *OctopusClient) getCampaignStatus() (map[string]bool, error) {
 }
 
 type GraphQLRequest struct {
-	Query     string                 `json:"query"`
-	Variables map[string]interface{} `json:"variables"`
+	OperationName string                 `json:"operationName,omitempty"`
+	Query         string                 `json:"query"`
+	Variables     map[string]interface{} `json:"variables"`
 }
 
 func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSessionsResponse, error) {
@@ -460,7 +523,7 @@ func (c *OctopusClient) getSavingSessionsREST() (*SavingSessionsResponse, error)
 }
 
 func (c *OctopusClient) refreshJWTToken() error {
-	// Check if token is still valid (with 5 minute buffer)
+	// Check if token is still valid (with 5 minute buffer, matching Home Assistant approach)
 	if !c.jwtExpiry.IsZero() && time.Until(c.jwtExpiry) > 5*time.Minute {
 		c.debugLog("JWT token still valid until %v", c.jwtExpiry)
 		return nil // Token still valid
@@ -556,11 +619,6 @@ func (c *OctopusClient) refreshJWTToken() error {
 }
 
 func (c *OctopusClient) getOctoPointsGraphQL() (int, error) {
-	// Ensure we have a valid JWT token
-	if err := c.refreshJWTToken(); err != nil {
-		return 0, fmt.Errorf("failed to get JWT token: %w", err)
-	}
-
 	c.debugLog("Requesting OctoPoints with JWT token...")
 
 	query := `query octoplusData($accountNumber: String!) {
@@ -577,31 +635,11 @@ func (c *OctopusClient) getOctoPointsGraphQL() (int, error) {
 		}
 	}`
 
-	requestBody := GraphQLRequest{
-		Query: query,
-		Variables: map[string]interface{}{
-			"accountNumber": c.AccountID,
-		},
+	variables := map[string]interface{}{
+		"accountNumber": c.AccountID,
 	}
 
-	reqBody, err := json.Marshal(requestBody)
-	if err != nil {
-		return 0, fmt.Errorf("failed to marshal request body: %w", err)
-	}
-
-	c.debugLog("OctoPoints request body: %s", string(reqBody))
-
-	req, err := http.NewRequest("POST", "https://api.octopus.energy/v1/graphql/", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return 0, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", c.jwtToken)
-
-	c.debugLog("Using JWT token: %s...", c.jwtToken[:20])
-
-	resp, err := c.client.Do(req)
+	resp, err := c.makeGraphQLRequest(query, variables, true)
 	if err != nil {
 		return 0, fmt.Errorf("failed to execute request: %w", err)
 	}
@@ -728,4 +766,82 @@ func (c *OctopusClient) JoinSavingSession(eventID int) error {
 	}
 
 	return nil
+}
+
+func (c *OctopusClient) getWheelOfFortuneSpins() (*WheelOfFortuneSpins, error) {
+	c.debugLog("Requesting Wheel of Fortune spins...")
+
+	query := `query getWheelOfFortuneSpinsAllowed($accountNumber: String!) {
+		gasSpins: wheelOfFortuneSpinsAllowed(
+			accountNumber: $accountNumber
+			fuelType: GAS
+		) {
+			spinsAllowed
+			__typename
+		}
+		electricitySpins: wheelOfFortuneSpinsAllowed(
+			accountNumber: $accountNumber
+			fuelType: ELECTRICITY
+		) {
+			spinsAllowed
+			__typename
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"accountNumber": c.AccountID,
+	}
+
+	// Use the backend endpoint for Wheel of Fortune with full JWT retry logic
+	resp, err := c.makeGraphQLRequestWithEndpoint(getEndpoint("backend-graphql"), query, variables, true, "getWheelOfFortuneSpinsAllowed")
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	c.debugLog("Wheel of Fortune request status: %d", resp.StatusCode)
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		c.debugLog("Wheel of Fortune request failed body: %s", string(bodyBytes))
+		log.Printf("Wheel of Fortune GraphQL error (status %d): %s", resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("GraphQL request failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data struct {
+			ElectricitySpins struct {
+				SpinsAllowed int    `json:"spinsAllowed"`
+				Typename     string `json:"__typename"`
+			} `json:"electricitySpins"`
+			GasSpins struct {
+				SpinsAllowed int    `json:"spinsAllowed"`
+				Typename     string `json:"__typename"`
+			} `json:"gasSpins"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(result.Errors) > 0 {
+		errorMessages := make([]string, len(result.Errors))
+		for i, err := range result.Errors {
+			errorMessages[i] = err.Message
+		}
+		return nil, fmt.Errorf("GraphQL errors: %s", strings.Join(errorMessages, ", "))
+	}
+
+	spins := &WheelOfFortuneSpins{
+		ElectricitySpins: result.Data.ElectricitySpins.SpinsAllowed,
+		GasSpins:        result.Data.GasSpins.SpinsAllowed,
+	}
+
+	c.debugLog("Wheel of Fortune spins: Electricity=%d, Gas=%d", spins.ElectricitySpins, spins.GasSpins)
+
+	return spins, nil
 }

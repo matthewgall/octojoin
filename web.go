@@ -33,6 +33,7 @@ type CampaignStatus struct {
 
 type SessionData struct {
 	CurrentPoints       int                      `json:"current_points"`
+	WheelOfFortuneSpins *WheelOfFortuneSpins     `json:"wheel_of_fortune_spins"`
 	SavingSessions      []SavingSession          `json:"saving_sessions"`
 	FreeElectricitySessions []FreeElectricitySession `json:"free_electricity_sessions"`
 	CampaignStatus      CampaignStatus           `json:"campaign_status"`
@@ -109,6 +110,13 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 		currentPoints = sessions.Data.OctoPoints.Account.CurrentPointsInWallet
 	}
 
+	// Get Wheel of Fortune spins
+	wheelSpins, err := ws.monitor.client.getWheelOfFortuneSpins()
+	if err != nil {
+		log.Printf("Warning: Could not get Wheel of Fortune spins: %v", err)
+		wheelSpins = &WheelOfFortuneSpins{ElectricitySpins: 0, GasSpins: 0}
+	}
+
 	// Get campaign status
 	campaigns, err := ws.monitor.client.getCampaignStatus()
 	if err != nil {
@@ -138,6 +146,7 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	
 	data := SessionData{
 		CurrentPoints:               currentPoints,
+		WheelOfFortuneSpins:        wheelSpins,
 		SavingSessions:             upcomingSavingSessions,
 		FreeElectricitySessions:    upcomingFreeElectricitySessions,
 		CampaignStatus:             campaignStatus,
@@ -452,6 +461,10 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
                         <div class="status-item">
                             <div class="status-value">${data.campaign_status.saving_sessions_enabled ? 'Yes' : 'No'}</div>
                             <div>Sessions Available</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-value">${(data.wheel_of_fortune_spins.electricity_spins + data.wheel_of_fortune_spins.gas_spins)}</div>
+                            <div>🎰 Wheel of Fortune Spins</div>
                         </div>
                     ` + "`" + `;
                     
