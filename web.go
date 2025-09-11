@@ -459,12 +459,8 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
                             <div>Upcoming Free Electricity Sessions</div>
                         </div>
                         <div class="status-item">
-                            <div class="status-value">${data.campaign_status.saving_sessions_enabled ? 'Yes' : 'No'}</div>
-                            <div>Sessions Available</div>
-                        </div>
-                        <div class="status-item">
                             <div class="status-value">${(data.wheel_of_fortune_spins.electricity_spins + data.wheel_of_fortune_spins.gas_spins)}</div>
-                            <div>🎰 Wheel of Fortune Spins</div>
+                            <div>Wheel of Fortune Spins</div>
                         </div>
                     ` + "`" + `;
                     
