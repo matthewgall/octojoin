@@ -23,7 +23,7 @@ jobs:
         go-version: ${{ matrix.go-version }}
     
     - name: Cache Go modules
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cache/go-build
@@ -59,7 +59,7 @@ jobs:
         go build -o dist/octojoin${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
     
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: octojoin-${{ matrix.os }}-go${{ matrix.go-version }}
         path: dist/
