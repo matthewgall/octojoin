@@ -73,6 +73,7 @@ func TestLoadState(t *testing.T) {
 	}
 	if state == nil {
 		t.Error("Expected new state to be created")
+		return
 	}
 	if len(state.KnownSessions) != 0 {
 		t.Error("Expected empty KnownSessions map")
