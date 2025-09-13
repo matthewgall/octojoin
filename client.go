@@ -312,16 +312,6 @@ func (c *OctopusClient) GetSavingSessions() (*SavingSessionsResponse, error) {
 	return c.GetSavingSessionsWithCache(nil)
 }
 
-// checkSavingSessionCampaign is deprecated - use getCampaignStatus() instead
-func (c *OctopusClient) checkSavingSessionCampaign() bool {
-	campaigns, err := c.getCampaignStatus()
-	if err != nil {
-		c.debugLog("Failed to get campaign status: %v", err)
-		return false
-	}
-	return campaigns["octoplus-saving-sessions"]
-}
-
 func (c *OctopusClient) getCampaignStatusWithCache(state *AppState) (map[string]bool, error) {
 	// Check cache if state is provided
 	if state != nil && state.CachedCampaignStatus != nil {
