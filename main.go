@@ -24,10 +24,11 @@ import (
 
 func main() {
 	var accountID, apiKey, configPath string
-	var daemon, webUI, debug bool
+	var daemon, webUI, debug, showVersion bool
 	var minPoints, webPort int
 	
 	flag.StringVar(&configPath, "config", "", "Path to configuration file")
+	flag.BoolVar(&showVersion, "version", false, "Show version information")
 	flag.StringVar(&accountID, "account", os.Getenv("OCTOPUS_ACCOUNT_ID"), "Octopus Energy Account ID")
 	flag.StringVar(&apiKey, "key", os.Getenv("OCTOPUS_API_KEY"), "Octopus Energy API Key")
 	flag.BoolVar(&daemon, "daemon", false, "Run in daemon mode (continuous monitoring)")
@@ -36,6 +37,13 @@ func main() {
 	flag.IntVar(&minPoints, "min-points", 0, "Minimum points threshold to join a session (0 = join all sessions)")
 	flag.IntVar(&webPort, "port", 8080, "Web UI port (default: 8080)")
 	flag.Parse()
+
+	// Handle version flag
+	if showVersion {
+		fmt.Printf("octojoin %s\n", GetVersion())
+		fmt.Printf("User-Agent: %s\n", GetUserAgent())
+		os.Exit(0)
+	}
 
 	// Load configuration file if provided
 	config, err := LoadConfig(configPath)

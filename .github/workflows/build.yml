@@ -56,7 +56,11 @@ jobs:
     - name: Build binary
       run: |
         mkdir -p dist
-        go build -o dist/octojoin${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
+        # Get version info for build
+        VERSION="${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}"
+        COMMIT="${{ github.sha }}"
+        # Build with version information
+        go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o dist/octojoin${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4

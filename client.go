@@ -168,6 +168,7 @@ func (c *OctopusClient) makeGraphQLRequestWithEndpoint(endpoint, query string, v
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", c.jwtToken)
+	req.Header.Set("User-Agent", GetUserAgent())
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -247,6 +248,7 @@ func (c *OctopusClient) makeRequestWithRetry(method, endpoint string, body inter
 
 	req.SetBasicAuth(c.APIKey, "")
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", GetUserAgent())
 
 	c.lastRequestTime = time.Now()
 	resp, err := c.client.Do(req)
@@ -555,6 +557,7 @@ func (c *OctopusClient) refreshJWTToken() error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", GetUserAgent())
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -715,6 +718,8 @@ func (c *OctopusClient) GetFreeElectricitySessionsWithCache(state *AppState) (*F
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	
+	req.Header.Set("User-Agent", GetUserAgent())
 
 	resp, err := c.client.Do(req)
 	if err != nil {
