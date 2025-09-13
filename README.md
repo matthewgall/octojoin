@@ -194,6 +194,36 @@ sudo systemctl enable octojoin
 If you enabled the web UI in `/etc/octojoin/config.yaml`, access it at:
 - `http://your-server:8080` (or your configured port)
 
+### Prometheus Metrics
+
+The web server exposes Prometheus-compatible metrics at `/metrics` for monitoring with Grafana, Prometheus, etc.
+
+**Available metrics:**
+- `octojoin_info` - Build and version information
+- `octojoin_up` - Application uptime status
+- `octojoin_octopoints_total` - Current OctoPoints balance
+- `octojoin_saving_sessions_total` - Number of joined saving sessions
+- `octojoin_campaign_enrolled` - Campaign enrollment status
+- `octojoin_campaign_status{campaign="name"}` - Status by campaign type
+- `octojoin_wheel_spins_total{fuel_type="gas|electricity"}` - Wheel of Fortune spins by fuel type
+- `octojoin_wheel_spins_combined` - Total combined Wheel of Fortune spins
+- `octojoin_free_electricity_sessions_total` - Total free electricity sessions
+- `octojoin_free_electricity_sessions_upcoming` - Upcoming free electricity sessions
+- `octojoin_known_sessions_total` - Total sessions tracked in state
+- `octojoin_cache_age_seconds{cache_type="name"}` - Age of cached data in seconds
+
+**Example Grafana queries:**
+```promql
+# OctoPoints balance over time
+octojoin_octopoints_total
+
+# Wheel of Fortune spins availability
+sum(octojoin_wheel_spins_total)
+
+# Cache hit efficiency
+octojoin_cache_age_seconds < 300
+```
+
 ### Security Notes
 
 - The service runs as a dedicated `octojoin` user with restricted permissions
@@ -227,6 +257,7 @@ If you enabled the web UI in `/etc/octojoin/config.yaml`, access it at:
 - **Exponential Backoff**: Automatically retries failed requests with increasing delays
 - **Robust Error Handling**: Handles 429, 5xx errors and network issues gracefully
 - **Debug Mode**: Comprehensive debug logging for troubleshooting
+- **Prometheus Metrics**: `/metrics` endpoint for monitoring with Grafana, Prometheus, etc.
 
 ## Building
 

@@ -59,6 +59,10 @@ func NewWebServer(monitor *SavingSessionMonitor, port int) *WebServer {
 	mux.HandleFunc("/", ws.handleDashboard)
 	mux.HandleFunc("/api/sessions", ws.handleSessionsAPI)
 	
+	// Add Prometheus metrics endpoint
+	metricsCollector := NewMetricsCollector(monitor.client, monitor)
+	mux.Handle("/metrics", metricsCollector)
+	
 	return ws
 }
 
