@@ -117,8 +117,8 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 		wheelSpins = &WheelOfFortuneSpins{ElectricitySpins: 0, GasSpins: 0}
 	}
 
-	// Get campaign status
-	campaigns, err := ws.monitor.client.getCampaignStatus()
+	// Get campaign status (with caching)
+	campaigns, err := ws.monitor.client.getCampaignStatusWithCache(ws.monitor.state)
 	if err != nil {
 		log.Printf("Warning: Could not get campaign status: %v", err)
 		campaigns = map[string]bool{

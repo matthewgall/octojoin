@@ -264,7 +264,7 @@ func (m *SavingSessionMonitor) CheckOnce() {
 }
 
 func (m *SavingSessionMonitor) displayCampaignStatus() {
-	campaigns, err := m.client.getCampaignStatus()
+	campaigns, err := m.client.getCampaignStatusWithCache(m.state)
 	if err != nil {
 		log.Printf("Warning: Could not check campaign status: %v", err)
 		return

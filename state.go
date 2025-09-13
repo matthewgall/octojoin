@@ -32,12 +32,18 @@ type CachedFreeElectricitySessions struct {
 	Timestamp time.Time                        `json:"timestamp"`
 }
 
+type CachedCampaignStatus struct {
+	Data      map[string]bool `json:"data"`
+	Timestamp time.Time       `json:"timestamp"`
+}
+
 type AppState struct {
 	AlertStates                map[string]*FreeElectricityAlertState `json:"alert_states"`
 	KnownSessions             map[int]bool                          `json:"known_sessions"`
 	KnownFreeElectricitySessions map[string]bool                     `json:"known_free_electricity_sessions"`
 	CachedSavingSessions      *CachedSavingSessions                 `json:"cached_saving_sessions,omitempty"`
 	CachedFreeElectricity     *CachedFreeElectricitySessions        `json:"cached_free_electricity,omitempty"`
+	CachedCampaignStatus      *CachedCampaignStatus                 `json:"cached_campaign_status,omitempty"`
 	JWTToken                  string                                `json:"jwt_token,omitempty"`
 	JWTTokenExpiry            time.Time                             `json:"jwt_token_expiry,omitempty"`
 	LastUpdated               time.Time                             `json:"last_updated"`

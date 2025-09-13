@@ -310,56 +310,39 @@ func (c *OctopusClient) GetSavingSessions() (*SavingSessionsResponse, error) {
 	return c.GetSavingSessionsWithCache(nil)
 }
 
+// checkSavingSessionCampaign is deprecated - use getCampaignStatus() instead
 func (c *OctopusClient) checkSavingSessionCampaign() bool {
-	query := `query checkCampaigns($accountNumber: String!) {
-		account(accountNumber: $accountNumber) {
-			campaigns {
-				slug
-			}
-		}
-	}`
-
-	variables := map[string]interface{}{
-		"accountNumber": c.AccountID,
-	}
-
-	resp, err := c.makeGraphQLRequest(query, variables, true)
+	campaigns, err := c.getCampaignStatus()
 	if err != nil {
-		c.debugLog("Failed to execute campaign request: %v", err)
+		c.debugLog("Failed to get campaign status: %v", err)
 		return false
 	}
-	defer resp.Body.Close()
+	return campaigns["octoplus-saving-sessions"]
+}
 
-	if resp.StatusCode != http.StatusOK {
-		c.debugLog("Campaign request failed with status %d", resp.StatusCode)
-		return false
-	}
-
-	var result struct {
-		Data struct {
-			Account struct {
-				Campaigns []struct {
-					Slug string `json:"slug"`
-				} `json:"campaigns"`
-			} `json:"account"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		c.debugLog("Failed to decode campaign response: %v", err)
-		return false
-	}
-
-	// Check if enrolled in saving sessions campaign
-	for _, campaign := range result.Data.Account.Campaigns {
-		if campaign.Slug == "octoplus-saving-sessions" {
-			c.debugLog("Found octoplus-saving-sessions campaign")
-			return true
+func (c *OctopusClient) getCampaignStatusWithCache(state *AppState) (map[string]bool, error) {
+	// Check cache if state is provided
+	if state != nil && state.CachedCampaignStatus != nil {
+		if state.IsCacheValid(state.CachedCampaignStatus.Timestamp, 5*time.Minute) {
+			return state.CachedCampaignStatus.Data, nil
 		}
 	}
 
-	c.debugLog("Not enrolled in octoplus-saving-sessions campaign")
-	return false
+	// Get fresh campaign data
+	campaigns, err := c.getCampaignStatus()
+	if err != nil {
+		return nil, err
+	}
+
+	// Update cache if state is provided
+	if state != nil {
+		state.CachedCampaignStatus = &CachedCampaignStatus{
+			Data:      campaigns,
+			Timestamp: time.Now(),
+		}
+	}
+
+	return campaigns, nil
 }
 
 func (c *OctopusClient) getCampaignStatus() (map[string]bool, error) {
@@ -443,8 +426,15 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 	}
 	c.debugLog("getOctoPointsGraphQL() returned %d points", points)
 
-	// Check campaign enrollment via GraphQL
-	hasJoinedCampaign := c.checkSavingSessionCampaign()
+	// Get campaign enrollment status via GraphQL (with caching)
+	campaigns, err := c.getCampaignStatusWithCache(state)
+	var hasJoinedCampaign bool
+	if err != nil {
+		log.Printf("Warning: Failed to get campaign status: %v", err)
+		hasJoinedCampaign = false // Default to false if GraphQL fails
+	} else {
+		hasJoinedCampaign = campaigns["octoplus-saving-sessions"]
+	}
 	c.debugLog("Campaign enrollment status: %v", hasJoinedCampaign)
 
 	// Combine the data
