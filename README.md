@@ -201,6 +201,7 @@ The web server exposes Prometheus-compatible metrics at `/metrics` for monitorin
 **Available metrics:**
 - `octojoin_info` - Build and version information
 - `octojoin_up` - Application uptime status
+- `octojoin_account_balance_pounds` - Current account balance in pounds
 - `octojoin_octopoints_total` - Current OctoPoints balance
 - `octojoin_saving_sessions_total` - Number of joined saving sessions
 - `octojoin_campaign_enrolled` - Campaign enrollment status
@@ -214,6 +215,9 @@ The web server exposes Prometheus-compatible metrics at `/metrics` for monitorin
 
 **Example Grafana queries:**
 ```promql
+# Account balance over time
+octojoin_account_balance_pounds
+
 # OctoPoints balance over time
 octojoin_octopoints_total
 

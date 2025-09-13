@@ -33,6 +33,7 @@ type CampaignStatus struct {
 
 type SessionData struct {
 	CurrentPoints       int                      `json:"current_points"`
+	AccountBalance      float64                  `json:"account_balance"`
 	WheelOfFortuneSpins *WheelOfFortuneSpins     `json:"wheel_of_fortune_spins"`
 	SavingSessions      []SavingSession          `json:"saving_sessions"`
 	FreeElectricitySessions []FreeElectricitySession `json:"free_electricity_sessions"`
@@ -114,6 +115,15 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 		currentPoints = sessions.Data.OctoPoints.Account.CurrentPointsInWallet
 	}
 
+	// Get account balance
+	accountBalance := 0.0
+	accountInfo, err := ws.monitor.client.getAccountInfo()
+	if err != nil {
+		log.Printf("Warning: Could not get account balance: %v", err)
+	} else {
+		accountBalance = accountInfo.Balance
+	}
+
 	// Get Wheel of Fortune spins
 	wheelSpins, err := ws.monitor.client.getWheelOfFortuneSpins()
 	if err != nil {
@@ -150,6 +160,7 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	
 	data := SessionData{
 		CurrentPoints:               currentPoints,
+		AccountBalance:              accountBalance,
 		WheelOfFortuneSpins:        wheelSpins,
 		SavingSessions:             upcomingSavingSessions,
 		FreeElectricitySessions:    upcomingFreeElectricitySessions,
@@ -453,6 +464,10 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
                         <div class="status-item">
                             <div class="status-value">${data.current_points}</div>
                             <div>OctoPoints</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-value">£${data.account_balance.toFixed(2)}</div>
+                            <div>Account Balance</div>
                         </div>
                         <div class="status-item">
                             <div class="status-value">${data.saving_sessions ? data.saving_sessions.length : 0}</div>

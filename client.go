@@ -830,3 +830,79 @@ func (c *OctopusClient) getWheelOfFortuneSpins() (*WheelOfFortuneSpins, error) {
 
 	return spins, nil
 }
+
+type AccountInfo struct {
+	Balance     float64 `json:"balance"`
+	AccountType string  `json:"accountType"`
+}
+
+func (c *OctopusClient) getAccountInfo() (*AccountInfo, error) {
+	c.debugLog("Requesting account info...")
+
+	query := `query getAccountInfo($accountNumber: String!) {
+		account(accountNumber: $accountNumber) {
+			activeReferralSchemes {
+				domestic {
+					referralUrl
+					referrerRewardAmount
+					__typename
+				}
+				__typename
+			}
+			balance
+			accountType
+			__typename
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"accountNumber": c.AccountID,
+	}
+
+	resp, err := c.makeGraphQLRequest(query, variables, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	c.debugLog("Account info request status: %d", resp.StatusCode)
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		c.debugLog("Account info request failed body: %s", string(bodyBytes))
+		return nil, fmt.Errorf("GraphQL request failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data struct {
+			Account struct {
+				Balance     float64 `json:"balance"`
+				AccountType string  `json:"accountType"`
+			} `json:"account"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(result.Errors) > 0 {
+		errorMessages := make([]string, len(result.Errors))
+		for i, err := range result.Errors {
+			errorMessages[i] = err.Message
+		}
+		return nil, fmt.Errorf("GraphQL errors: %s", strings.Join(errorMessages, ", "))
+	}
+
+	accountInfo := &AccountInfo{
+		Balance:     result.Data.Account.Balance / 100.0, // Convert from pennies to pounds
+		AccountType: result.Data.Account.AccountType,
+	}
+
+	c.debugLog("Account balance: £%.2f, Account type: %s", accountInfo.Balance, accountInfo.AccountType)
+
+	return accountInfo, nil
+}
