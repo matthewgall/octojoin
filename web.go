@@ -462,12 +462,12 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
                     const statusDiv = document.getElementById('status');
                     statusDiv.innerHTML = ` + "`" + `
                         <div class="status-item">
-                            <div class="status-value">${data.current_points}</div>
-                            <div>OctoPoints</div>
-                        </div>
-                        <div class="status-item">
                             <div class="status-value">£${data.account_balance.toFixed(2)}</div>
                             <div>Account Balance</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-value">${data.current_points}</div>
+                            <div>OctoPoints</div>
                         </div>
                         <div class="status-item">
                             <div class="status-value">${data.saving_sessions ? data.saving_sessions.length : 0}</div>
