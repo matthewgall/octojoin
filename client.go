@@ -701,40 +701,58 @@ func (c *OctopusClient) GetFreeElectricitySessionsWithCache(state *AppState) (*F
 			return state.CachedFreeElectricity.Data, nil
 		}
 	}
-	// Free electricity sessions are available through a third-party API
-	url := "https://oe-api.davidskendall.co.uk/free_electricity.json"
-	
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	// Free electricity sessions with fallback endpoints for reliability
+	urls := []string{
+		"https://matthewgall.github.io/octoevents/free_electricity.json",           // Primary: GitHub Pages (fastest)
+		"https://raw.githubusercontent.com/matthewgall/octoevents/refs/heads/main/free_electricity.json", // Fallback 1: GitHub Raw
+		"https://oe-api.davidskendall.co.uk/free_electricity.json",                // Fallback 2: David's API
 	}
 	
-	req.Header.Set("User-Agent", GetUserAgent())
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
-	}
-
-	var result FreeElectricitySessionsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	// Update cache if state is provided
-	if state != nil {
-		state.CachedFreeElectricity = &CachedFreeElectricitySessions{
-			Data:      &result,
-			Timestamp: time.Now(),
+	var lastErr error
+	for i, url := range urls {
+		c.debugLog("Trying free electricity endpoint %d: %s", i+1, url)
+		
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create request for %s: %w", url, err)
+			continue
 		}
-	}
+		
+		req.Header.Set("User-Agent", GetUserAgent())
 
-	return &result, nil
+		resp, err := c.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to make request to %s: %w", url, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("API request to %s failed with status %d", url, resp.StatusCode)
+			continue
+		}
+
+		var result FreeElectricitySessionsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			lastErr = fmt.Errorf("failed to decode response from %s: %w", url, err)
+			continue
+		}
+		
+		c.debugLog("Successfully retrieved free electricity sessions from endpoint %d", i+1)
+		
+		// Update cache if state is provided
+		if state != nil {
+			state.CachedFreeElectricity = &CachedFreeElectricitySessions{
+				Data:      &result,
+				Timestamp: time.Now(),
+			}
+		}
+
+		return &result, nil
+	}
+	
+	// If all endpoints failed, return the last error
+	return nil, fmt.Errorf("all free electricity endpoints failed, last error: %w", lastErr)
 }
 
 func (c *OctopusClient) JoinSavingSession(eventID int) error {
