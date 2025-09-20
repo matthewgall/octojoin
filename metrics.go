@@ -60,8 +60,8 @@ func (m *MetricsCollector) collectMetrics() string {
 	m.writeMetricHeader(&metrics, "octojoin_last_check_timestamp", "gauge", "Unix timestamp of last successful check")
 	m.writeMetric(&metrics, "octojoin_last_check_timestamp", nil, float64(time.Now().Unix()))
 	
-	// Get account balance
-	accountInfo, err := m.client.getAccountInfo()
+	// Get account balance (with caching)
+	accountInfo, err := m.client.getAccountInfoWithCache(m.monitor.state)
 	if err == nil && accountInfo != nil {
 		m.writeMetricHeader(&metrics, "octojoin_account_balance_pounds", "gauge", "Account balance in pounds")
 		m.writeMetric(&metrics, "octojoin_account_balance_pounds", nil, accountInfo.Balance)

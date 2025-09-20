@@ -904,6 +904,31 @@ type AccountInfo struct {
 	AccountType string  `json:"accountType"`
 }
 
+func (c *OctopusClient) getAccountInfoWithCache(state *AppState) (*AccountInfo, error) {
+	// Check cache if state is provided - account balance changes at most hourly, often less
+	if state != nil && state.CachedAccountInfo != nil {
+		if state.IsCacheValid(state.CachedAccountInfo.Timestamp, 1*time.Hour) {
+			return state.CachedAccountInfo.Data, nil
+		}
+	}
+
+	// Get fresh account info
+	accountInfo, err := c.getAccountInfo()
+	if err != nil {
+		return nil, err
+	}
+
+	// Update cache if state is provided
+	if state != nil {
+		state.CachedAccountInfo = &CachedAccountInfo{
+			Data:      accountInfo,
+			Timestamp: time.Now(),
+		}
+	}
+
+	return accountInfo, nil
+}
+
 func (c *OctopusClient) getAccountInfo() (*AccountInfo, error) {
 	c.debugLog("Requesting account info...")
 

@@ -115,9 +115,9 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 		currentPoints = sessions.Data.OctoPoints.Account.CurrentPointsInWallet
 	}
 
-	// Get account balance
+	// Get account balance (with caching)
 	accountBalance := 0.0
-	accountInfo, err := ws.monitor.client.getAccountInfo()
+	accountInfo, err := ws.monitor.client.getAccountInfoWithCache(ws.monitor.state)
 	if err != nil {
 		log.Printf("Warning: Could not get account balance: %v", err)
 	} else {
