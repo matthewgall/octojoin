@@ -102,8 +102,8 @@ func (m *MetricsCollector) collectMetrics() string {
 		}
 	}
 	
-	// Wheel of Fortune spins
-	spins, err := m.client.getWheelOfFortuneSpins()
+	// Wheel of Fortune spins (with caching)
+	spins, err := m.client.getWheelOfFortuneSpinsWithCache(m.monitor.state)
 	if err == nil && spins != nil {
 		m.writeMetricHeader(&metrics, "octojoin_wheel_spins_total", "gauge", "Available Wheel of Fortune spins by fuel type")
 		m.writeMetric(&metrics, "octojoin_wheel_spins_total", map[string]string{

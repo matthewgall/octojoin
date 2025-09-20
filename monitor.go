@@ -134,8 +134,8 @@ func (m *SavingSessionMonitor) checkSavingSessions() {
 
 	log.Printf("Current points in wallet: %d", response.Data.OctoPoints.Account.CurrentPointsInWallet)
 
-	// Get and display Wheel of Fortune spins
-	spins, err := m.client.getWheelOfFortuneSpins()
+	// Get and display Wheel of Fortune spins (with caching)
+	spins, err := m.client.getWheelOfFortuneSpinsWithCache(m.state)
 	if err != nil {
 		log.Printf("Warning: Could not get Wheel of Fortune spins: %v", err)
 	} else {

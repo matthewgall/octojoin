@@ -37,6 +37,16 @@ type CachedCampaignStatus struct {
 	Timestamp time.Time       `json:"timestamp"`
 }
 
+type CachedOctoPoints struct {
+	Data      int       `json:"data"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type CachedWheelOfFortuneSpins struct {
+	Data      *WheelOfFortuneSpins `json:"data"`
+	Timestamp time.Time            `json:"timestamp"`
+}
+
 type AppState struct {
 	AlertStates                map[string]*FreeElectricityAlertState `json:"alert_states"`
 	KnownSessions             map[int]bool                          `json:"known_sessions"`
@@ -44,6 +54,8 @@ type AppState struct {
 	CachedSavingSessions      *CachedSavingSessions                 `json:"cached_saving_sessions,omitempty"`
 	CachedFreeElectricity     *CachedFreeElectricitySessions        `json:"cached_free_electricity,omitempty"`
 	CachedCampaignStatus      *CachedCampaignStatus                 `json:"cached_campaign_status,omitempty"`
+	CachedOctoPoints          *CachedOctoPoints                     `json:"cached_octo_points,omitempty"`
+	CachedWheelOfFortuneSpins *CachedWheelOfFortuneSpins            `json:"cached_wheel_of_fortune_spins,omitempty"`
 	JWTToken                  string                                `json:"jwt_token,omitempty"`
 	JWTTokenExpiry            time.Time                             `json:"jwt_token_expiry,omitempty"`
 	LastUpdated               time.Time                             `json:"last_updated"`

@@ -124,8 +124,8 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 		accountBalance = accountInfo.Balance
 	}
 
-	// Get Wheel of Fortune spins
-	wheelSpins, err := ws.monitor.client.getWheelOfFortuneSpins()
+	// Get Wheel of Fortune spins (with caching)
+	wheelSpins, err := ws.monitor.client.getWheelOfFortuneSpinsWithCache(ws.monitor.state)
 	if err != nil {
 		log.Printf("Warning: Could not get Wheel of Fortune spins: %v", err)
 		wheelSpins = &WheelOfFortuneSpins{ElectricitySpins: 0, GasSpins: 0}

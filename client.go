@@ -313,9 +313,9 @@ func (c *OctopusClient) GetSavingSessions() (*SavingSessionsResponse, error) {
 }
 
 func (c *OctopusClient) getCampaignStatusWithCache(state *AppState) (map[string]bool, error) {
-	// Check cache if state is provided
+	// Check cache if state is provided - campaign status rarely changes
 	if state != nil && state.CachedCampaignStatus != nil {
-		if state.IsCacheValid(state.CachedCampaignStatus.Timestamp, 5*time.Minute) {
+		if state.IsCacheValid(state.CachedCampaignStatus.Timestamp, 24*time.Hour) {
 			return state.CachedCampaignStatus.Data, nil
 		}
 	}
@@ -396,9 +396,9 @@ type GraphQLRequest struct {
 }
 
 func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSessionsResponse, error) {
-	// Check cache if state is provided
+	// Check cache if state is provided - saving sessions announced day before
 	if state != nil && state.CachedSavingSessions != nil {
-		if state.IsCacheValid(state.CachedSavingSessions.Timestamp, 5*time.Minute) {
+		if state.IsCacheValid(state.CachedSavingSessions.Timestamp, 2*time.Hour) {
 			return state.CachedSavingSessions.Data, nil
 		}
 	}
@@ -409,14 +409,14 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 		return nil, err
 	}
 
-	// Get OctoPoints from GraphQL API
-	c.debugLog("About to call getOctoPointsGraphQL()")
-	points, err := c.getOctoPointsGraphQL()
+	// Get OctoPoints from GraphQL API (with caching)
+	c.debugLog("About to call getOctoPointsGraphQLWithCache()")
+	points, err := c.getOctoPointsGraphQLWithCache(state)
 	if err != nil {
 		log.Printf("Warning: Failed to get OctoPoints: %v", err)
 		points = 0 // Default to 0 if GraphQL fails
 	}
-	c.debugLog("getOctoPointsGraphQL() returned %d points", points)
+	c.debugLog("getOctoPointsGraphQLWithCache() returned %d points", points)
 
 	// Get campaign enrollment status via GraphQL (with caching)
 	campaigns, err := c.getCampaignStatusWithCache(state)
@@ -601,6 +601,31 @@ func (c *OctopusClient) refreshJWTToken() error {
 	return nil
 }
 
+func (c *OctopusClient) getOctoPointsGraphQLWithCache(state *AppState) (int, error) {
+	// Check cache if state is provided - OctoPoints change at most hourly
+	if state != nil && state.CachedOctoPoints != nil {
+		if state.IsCacheValid(state.CachedOctoPoints.Timestamp, 1*time.Hour) {
+			return state.CachedOctoPoints.Data, nil
+		}
+	}
+
+	// Get fresh OctoPoints data
+	points, err := c.getOctoPointsGraphQL()
+	if err != nil {
+		return 0, err
+	}
+
+	// Update cache if state is provided
+	if state != nil {
+		state.CachedOctoPoints = &CachedOctoPoints{
+			Data:      points,
+			Timestamp: time.Now(),
+		}
+	}
+
+	return points, nil
+}
+
 func (c *OctopusClient) getOctoPointsGraphQL() (int, error) {
 	c.debugLog("Requesting OctoPoints with JWT token...")
 
@@ -695,9 +720,9 @@ func (c *OctopusClient) GetFreeElectricitySessions() (*FreeElectricitySessionsRe
 }
 
 func (c *OctopusClient) GetFreeElectricitySessionsWithCache(state *AppState) (*FreeElectricitySessionsResponse, error) {
-	// Check cache if state is provided
+	// Check cache if state is provided - free electricity announced day before
 	if state != nil && state.CachedFreeElectricity != nil {
-		if state.IsCacheValid(state.CachedFreeElectricity.Timestamp, 10*time.Minute) {
+		if state.IsCacheValid(state.CachedFreeElectricity.Timestamp, 4*time.Hour) {
 			return state.CachedFreeElectricity.Data, nil
 		}
 	}
@@ -769,6 +794,31 @@ func (c *OctopusClient) JoinSavingSession(eventID int) error {
 	}
 
 	return nil
+}
+
+func (c *OctopusClient) getWheelOfFortuneSpinsWithCache(state *AppState) (*WheelOfFortuneSpins, error) {
+	// Check cache if state is provided - Wheel of Fortune spins update once daily
+	if state != nil && state.CachedWheelOfFortuneSpins != nil {
+		if state.IsCacheValid(state.CachedWheelOfFortuneSpins.Timestamp, 12*time.Hour) {
+			return state.CachedWheelOfFortuneSpins.Data, nil
+		}
+	}
+
+	// Get fresh Wheel of Fortune data
+	spins, err := c.getWheelOfFortuneSpins()
+	if err != nil {
+		return nil, err
+	}
+
+	// Update cache if state is provided
+	if state != nil {
+		state.CachedWheelOfFortuneSpins = &CachedWheelOfFortuneSpins{
+			Data:      spins,
+			Timestamp: time.Now(),
+		}
+	}
+
+	return spins, nil
 }
 
 func (c *OctopusClient) getWheelOfFortuneSpins() (*WheelOfFortuneSpins, error) {
