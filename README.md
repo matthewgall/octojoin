@@ -1,273 +1,132 @@
 # OctoJoin
 
-A comprehensive Go application that monitors Octopus Energy (UK) saving sessions and free electricity periods, with automatic session joining and a real-time web dashboard.
+A Go application that monitors Octopus Energy (UK) saving sessions and free electricity periods, automatically joining eligible sessions with a real-time web dashboard.
 
-## Overview
+## What it does
 
-OctoJoin connects to the Octopus Energy API to monitor for:
-- **Saving Sessions** - Events where customers earn OctoPoints for reducing energy usage during peak demand
-- **Free Electricity Sessions** - Periods where electricity usage is completely free
+- **Saving Sessions**: Automatically joins sessions that earn OctoPoints for reducing energy usage
+- **Free Electricity**: Monitors and alerts for periods of completely free electricity  
+- **Real-time Dashboard**: Live web interface with countdown timers and session status
+- **Smart Monitoring**: Configurable points threshold and continuous daemon mode
 
-The application automatically joins eligible saving sessions based on your configured points threshold and provides real-time monitoring through both CLI and web interface.
+## Quick Start
 
-## Usage
-
-### One-Shot Mode (Default)
-
-By default, OctoJoin runs once, checks for new saving sessions, and exits:
-
+### Basic Usage
 ```bash
-./octojoin -account=<your_account_id> -key=<your_api_key>
+# Run once and exit
+./octojoin -account=A-1234ABCD -key=sk_live_xxx
+
+# Continuous monitoring with web dashboard
+./octojoin -daemon -web -account=A-1234ABCD -key=sk_live_xxx
 ```
 
-### Daemon Mode
-
-To run continuously and monitor for new sessions every 10 minutes:
-
+### Using Environment Variables
 ```bash
-./octojoin -daemon -account=<your_account_id> -key=<your_api_key>
+export OCTOPUS_ACCOUNT_ID=A-1234ABCD
+export OCTOPUS_API_KEY=sk_live_xxx
+./octojoin -daemon -web
 ```
 
-### Web Dashboard
-
-Enable the real-time web dashboard (daemon mode only):
-
-```bash
-./octojoin -daemon -web -account=<your_account_id> -key=<your_api_key>
-```
-
-Access the dashboard at: `http://localhost:8080`
-
-The web dashboard shows:
-- Current OctoPoints balance  
-- Feature availability status
-- Upcoming saving sessions with live countdowns
-- Upcoming free electricity sessions with live countdowns
-- Auto-refresh every 30 seconds
-
-### Environment Variables
-
-```bash
-export OCTOPUS_ACCOUNT_ID=<your_account_id>
-export OCTOPUS_API_KEY=<your_api_key>
-./octojoin              # One-shot mode
-./octojoin -daemon      # Daemon mode
-```
-
-### Configuration File
-
-Create a `config.yaml` file for easier management:
-
+### Using Configuration File
 ```bash
 cp config.example.yaml config.yaml
 # Edit config.yaml with your credentials
 ./octojoin -config=config.yaml
 ```
 
-### Parameters
+**Web Dashboard**: Access at `http://localhost:8080` (daemon mode only)
 
-- `-config`: Path to configuration file (YAML format)
-- `-account`: Your Octopus Energy Account ID (or set `OCTOPUS_ACCOUNT_ID`)
-- `-key`: Your Octopus Energy API Key (or set `OCTOPUS_API_KEY`)
-- `-daemon`: Run in daemon mode for continuous monitoring
-- `-web`: Enable web UI dashboard (requires daemon mode)
-- `-port`: Web UI port (default: 8080)
-- `-min-points`: Minimum points threshold to join a session (default: 0 = join all sessions)
-- `-debug`: Enable debug logging for troubleshooting
+## Configuration
 
-**Configuration Precedence:** Command line arguments > Environment variables > Configuration file
+### Command Line Options
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-config` | Path to YAML configuration file | - |
+| `-account` | Octopus Energy Account ID | `OCTOPUS_ACCOUNT_ID` env var |
+| `-key` | Octopus Energy API Key | `OCTOPUS_API_KEY` env var |
+| `-daemon` | Run continuously | false |
+| `-web` | Enable web dashboard | false |
+| `-port` | Web UI port | 8080 |
+| `-min-points` | Minimum points to join session | 0 (join all) |
+| `-debug` | Enable debug logging | false |
 
-### Configuration File Format
-
+### Configuration File (config.yaml)
 ```yaml
-# OctoJoin Configuration File
 account_id: "A-1234ABCD"
-api_key: "sk_live_xxxxxxxxxxxxxxxxxxxxxxxxx"
+api_key: "sk_live_xxxxxxxxxx"
 daemon: true
 web_ui: true
 web_port: 8080
 min_points: 100
-check_interval_minutes: 15
 debug: false
 ```
 
-**Configuration Options:**
-- `account_id`: Your Octopus Energy Account ID
-- `api_key`: Your Octopus Energy API Key
-- `daemon`: Run in daemon mode (true/false)
-- `web_ui`: Enable web dashboard (true/false)
-- `web_port`: Web UI port number (integer)
-- `min_points`: Minimum points threshold (integer)
-- `check_interval_minutes`: Minutes between checks in daemon mode (integer)
-- `debug`: Enable debug logging (true/false)
+### Getting Your Credentials
+1. **Account ID**: Found in your Octopus Energy dashboard
+2. **API Key**: Available in account settings → API section
 
-### Usage Examples
+## Linux System Service
+
+Install as a systemd service for continuous monitoring:
 
 ```bash
-# Basic one-shot check
-./octojoin -account=A-1234ABCD -key=sk_live_xxx
+# 1. Create system user and directories
+sudo useradd --system --create-home --home-dir /var/lib/octojoin --shell /bin/false octojoin
+sudo mkdir -p /opt/octojoin
 
-# Daemon mode with web dashboard
-./octojoin -daemon -web -account=A-1234ABCD -key=sk_live_xxx
+# 2. Install binary and config
+sudo cp octojoin /opt/octojoin/
+sudo cp config.example.yaml /opt/octojoin/config.yaml
+sudo chown root:octojoin /opt/octojoin/config.yaml
+sudo chmod 640 /opt/octojoin/config.yaml
 
-# Custom web port and debug mode
-./octojoin -daemon -web -port=9000 -debug -account=A-1234ABCD -key=sk_live_xxx
+# 3. Edit configuration
+sudo nano /opt/octojoin/config.yaml
 
-# Only join sessions worth 100+ points
-./octojoin -daemon -min-points=100 -account=A-1234ABCD -key=sk_live_xxx
-
-# Use configuration file (recommended)
-./octojoin -config=config.yaml
-
-# Environment variables with web UI
-export OCTOPUS_ACCOUNT_ID=A-1234ABCD
-export OCTOPUS_API_KEY=sk_live_xxx
-./octojoin -daemon -web
+# 4. Install and start service
+sudo cp octojoin.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now octojoin
 ```
-
-### Finding Your Credentials
-
-1. **Account ID**: Found in your Octopus Energy account dashboard
-2. **API Key**: Available in your account settings under the API section
-
-## System Service Installation (Linux)
-
-For continuous monitoring on Linux servers, you can install OctoJoin as a systemd service:
-
-### Installation Steps
-
-1. **Create system user and directories:**
-   ```bash
-   sudo useradd --system --create-home --home-dir /var/lib/octojoin --shell /bin/false octojoin
-   sudo mkdir -p /opt/octojoin
-   ```
-
-2. **Install the binary:**
-   ```bash
-   sudo cp octojoin /opt/octojoin/
-   sudo chown root:root /opt/octojoin/octojoin
-   sudo chmod 755 /opt/octojoin/octojoin
-   ```
-
-3. **Create configuration:**
-   ```bash
-   sudo cp config.example.yaml /opt/octojoin/config.yaml
-   sudo chown root:octojoin /opt/octojoin/config.yaml
-   sudo chmod 640 /opt/octojoin/config.yaml
-   # Edit the configuration with your credentials
-   sudo nano /opt/octojoin/config.yaml
-   ```
-
-4. **Install and start the service:**
-   ```bash
-   sudo cp octojoin.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable octojoin
-   sudo systemctl start octojoin
-   ```
-
-5. **Check service status:**
-   ```bash
-   sudo systemctl status octojoin
-   sudo journalctl -u octojoin -f  # Follow logs
-   ```
 
 ### Service Management
-
 ```bash
-# Start/stop/restart the service
-sudo systemctl start octojoin
-sudo systemctl stop octojoin
-sudo systemctl restart octojoin
-
-# Check status and logs
-sudo systemctl status octojoin
-sudo journalctl -u octojoin --since "1 hour ago"
-
-# Disable/enable auto-start
-sudo systemctl disable octojoin
-sudo systemctl enable octojoin
+sudo systemctl status octojoin          # Check status
+sudo journalctl -u octojoin -f          # Follow logs
+sudo systemctl restart octojoin         # Restart service
 ```
 
-### Web Dashboard Access
-
-If you enabled the web UI in `/etc/octojoin/config.yaml`, access it at:
-- `http://your-server:8080` (or your configured port)
+## Monitoring & Metrics
 
 ### Prometheus Metrics
+The web server exposes metrics at `/metrics` for Grafana/Prometheus monitoring:
 
-The web server exposes Prometheus-compatible metrics at `/metrics` for monitoring with Grafana, Prometheus, etc.
+| Metric | Description |
+|--------|-------------|
+| `octojoin_account_balance_pounds` | Account balance |
+| `octojoin_octopoints_total` | OctoPoints balance |
+| `octojoin_saving_sessions_total` | Joined saving sessions |
+| `octojoin_wheel_spins_total{fuel_type}` | Wheel of Fortune spins |
+| `octojoin_free_electricity_sessions_upcoming` | Upcoming free sessions |
+| `octojoin_cache_age_seconds{cache_type}` | Cache age monitoring |
 
-**Available metrics:**
-- `octojoin_info` - Build and version information
-- `octojoin_up` - Application uptime status
-- `octojoin_account_balance_pounds` - Current account balance in pounds
-- `octojoin_octopoints_total` - Current OctoPoints balance
-- `octojoin_saving_sessions_total` - Number of joined saving sessions
-- `octojoin_campaign_enrolled` - Campaign enrollment status
-- `octojoin_campaign_status{campaign="name"}` - Status by campaign type
-- `octojoin_wheel_spins_total{fuel_type="gas|electricity"}` - Wheel of Fortune spins by fuel type
-- `octojoin_wheel_spins_combined` - Total combined Wheel of Fortune spins
-- `octojoin_free_electricity_sessions_total` - Total free electricity sessions
-- `octojoin_free_electricity_sessions_upcoming` - Upcoming free electricity sessions
-- `octojoin_known_sessions_total` - Total sessions tracked in state
-- `octojoin_cache_age_seconds{cache_type="name"}` - Age of cached data in seconds (saving_sessions, campaign_status, free_electricity, octo_points, wheel_of_fortune_spins, account_info)
-
-**Example Grafana queries:**
+### Example Grafana Queries
 ```promql
-# Account balance over time
-octojoin_account_balance_pounds
-
-# OctoPoints balance over time
-octojoin_octopoints_total
-
-# Wheel of Fortune spins availability
-sum(octojoin_wheel_spins_total)
-
-# Cache age monitoring
-octojoin_cache_age_seconds
-
-# Cache freshness (under 5 minutes)
-octojoin_cache_age_seconds < 300
-
-# Account balance cache efficiency (should be < 3600 seconds)
-octojoin_cache_age_seconds{cache_type="account_info"} < 3600
+octojoin_account_balance_pounds              # Account balance over time
+octojoin_octopoints_total                    # OctoPoints over time  
+sum(octojoin_wheel_spins_total)              # Total spins available
+octojoin_cache_age_seconds < 300             # Cache freshness check
 ```
-
-### Security Notes
-
-- The service runs as a dedicated `octojoin` user with restricted permissions
-- Configuration files should be readable only by root and the octojoin group
-- State files are stored in `/var/lib/octojoin/` with appropriate permissions
-- The service uses systemd security features like `NoNewPrivileges` and `ProtectSystem`
 
 ## Features
 
-### Core Functionality
-- **One-Shot or Daemon Mode**: Run once and exit (default) or continuously monitor
-- **Dual Session Support**: Monitors both saving sessions and free electricity sessions
-- **Automatic Opt-in**: Joins eligible saving sessions based on points threshold
-- **Free Electricity Detection**: Detects and reports free electricity periods (no joining required)
-- **Session Tracking**: Keeps track of known sessions to avoid duplicate processing
-- **Future Session Focus**: Only attempts to join sessions that haven't started
-
-### User Interface
-- **Real-time Web Dashboard**: Live countdown timers, session status, and auto-refresh
-- **Feature Status Display**: Shows which Octopus campaigns you're enrolled in
-- **Detailed CLI Logging**: Current points balance, session details, and feature availability
-- **Smart Alerting**: Intelligent free electricity alerts to prevent log spam
-
-### Technical Features
-- **JWT Token Persistence**: Cached authentication tokens for improved performance
-- **GraphQL Integration**: Real-time OctoPoints balance via Octopus GraphQL API
-- **Account-Specific State**: Persistent state storage with account isolation
-- **Multiple Configuration Methods**: Command line arguments, environment variables, or YAML config file
-- **Points Threshold**: Set minimum points required before joining a session (0 = join all)
-- **Rate Limiting**: Respects API rate limits with automatic throttling
-- **Exponential Backoff**: Automatically retries failed requests with increasing delays
-- **Robust Error Handling**: Handles 429, 5xx errors and network issues gracefully
-- **Debug Mode**: Comprehensive debug logging for troubleshooting
-- **Prometheus Metrics**: `/metrics` endpoint for monitoring with Grafana, Prometheus, etc.
+- **Dual Session Support**: Monitors saving sessions and free electricity periods
+- **Automatic Joining**: Joins eligible saving sessions based on points threshold  
+- **Real-time Dashboard**: Live web interface with countdown timers
+- **Smart Caching**: Intelligent API caching based on real-world update patterns
+- **Multiple Run Modes**: One-shot, continuous daemon, or systemd service
+- **Robust Error Handling**: JWT token management, exponential backoff, rate limiting
+- **Comprehensive Monitoring**: Prometheus metrics for cache effectiveness and system health
 
 ## Building
 
@@ -279,73 +138,31 @@ go build -o octojoin
 
 ```
 2025/01/15 14:30:00 Starting Octopus Energy Saving Session Monitor
-2025/01/15 14:30:00 Account ID: A-1234ABCD
-2025/01/15 14:30:00 API Key: sk_live_...
-2025/01/15 14:30:00 Minimum points threshold: 100
 2025/01/15 14:30:00 Web UI enabled at http://localhost:8080
 2025/01/15 14:30:00 Running in daemon mode - continuous monitoring
-2025/01/15 14:30:00 Checking for new sessions...
 
 Feature Status:
-✅ Saving Sessions: ENABLED (octoplus + octoplus-saving-sessions)
-✅ Free Electricity: ENABLED (free_electricity)
+✅ Saving Sessions: ENABLED
+✅ Free Electricity: ENABLED
 
 2025/01/15 14:30:01 Current points in wallet: 13,492
 2025/01/15 14:30:01 💰 SAVING SESSION FOUND
-   Date: Tuesday, Jan 15 at 17:30
-   Duration: 1h
-   Reward: 150 points
-   Starts in 3h
-   Meets criteria (150 >= 100 points), attempting to join...
-   Successfully joined session!
+   Date: Tuesday, Jan 15 at 17:30 • Duration: 1h • Reward: 150 points
+   Meets criteria (150 >= 100 points) → Successfully joined!
 
-2025/01/15 14:30:02 🔋 FREE ELECTRICITY SESSION - INITIAL ALERT
-   Date: Wednesday, Jan 16 at 10:00
-   Duration: 4h
-   Starts tomorrow
+2025/01/15 14:30:02 🔋 FREE ELECTRICITY SESSION
+   Date: Wednesday, Jan 16 at 10:00 • Duration: 4h
    No action needed - automatically free!
 ```
 
-## Notes
+## How it Works
 
-### Operation Modes
-- **One-Shot Mode**: Runs once and exits, ideal for cron jobs or manual execution
-- **Daemon Mode**: Continues running and monitoring until interrupted (Ctrl+C)
-- **Web Dashboard**: Real-time monitoring with live countdowns (daemon mode only)
-
-### Session Management
-- **Points Filtering**: Saving sessions below the minimum points threshold are automatically skipped
-- **Free Electricity**: These sessions are automatic benefits - just use electricity during the period!
-- **Smart Alerts**: Free electricity sessions use intelligent alerting to avoid log spam in daemon mode
-- Sessions that have already started or ended will be logged but not joined
-
-### State & Caching
-- **Persistent State**: Session tracking and JWT tokens stored in `~/.config/octojoin/`
-- **Account Isolation**: Multiple accounts can be used without data pollution
-- **API Caching**: Reduces API calls with intelligent cache management
-- **JWT Persistence**: Authentication tokens cached for improved performance
-
-### Configuration
-- **Configuration File**: Store credentials and settings in a YAML file for easy deployment  
-- **Multiple Accounts**: Run separate instances for different Octopus accounts
-- **Debug Mode**: Use `-debug` flag for detailed troubleshooting information
-
-### Performance
-- OctoPoints convert at ~800 points = £1 (rates may vary)
-- In daemon mode, the monitoring interval is set to 10 minutes to avoid excessive API calls
-- Use one-shot mode with a cron job for regular automated checks without keeping a process running
-- Web dashboard auto-refreshes every 30 seconds with smart content updates
-
-### Free Electricity Session Alerts
-
-In daemon mode, free electricity sessions will only alert at key intervals to avoid log spam:
-- **Initial Alert**: When first discovered
-- **Day-of Alert**: Within 24 hours of start
-- **12-hour Reminder**: 12 hours before start
-- **6-hour Reminder**: 6 hours before start  
-- **Final Alert**: 15 minutes before start or when active
-
-In one-shot mode, relevant sessions are always displayed.
+- **One-Shot Mode**: Run once and exit (default) - ideal for cron jobs
+- **Daemon Mode**: Continuous monitoring every 10 minutes  
+- **Smart Filtering**: Only joins sessions meeting your points threshold
+- **Intelligent Caching**: Optimized API usage based on real-world update patterns
+- **State Persistence**: Session tracking stored in `~/.config/octojoin/`
+- **Free Electricity Alerts**: Smart alerting at key intervals to avoid spam
 
 ## Support the Project
 
