@@ -201,9 +201,9 @@ func (m *MetricsCollector) writeMetricHeader(sb *strings.Builder, name, metricTy
 
 // writeMetric writes a metric with optional labels
 func (m *MetricsCollector) writeMetric(sb *strings.Builder, name string, labels map[string]string, value float64) {
-	// Use %.0f for timestamps to avoid scientific notation, %g for other values
+	// Use %.0f for timestamps and cache_age to avoid scientific notation, %g for other values
 	format := "%g"
-	if strings.Contains(name, "timestamp") {
+	if strings.Contains(name, "timestamp") || strings.Contains(name, "cache_age") {
 		format = "%.0f"
 	}
 	
