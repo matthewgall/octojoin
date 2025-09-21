@@ -140,8 +140,10 @@ func (m *MetricsCollector) collectMetrics() string {
 		m.writeMetricHeader(&metrics, "octojoin_known_sessions_total", "gauge", "Total number of known sessions in state")
 		m.writeMetric(&metrics, "octojoin_known_sessions_total", nil, float64(len(m.monitor.state.KnownSessions)))
 		
-		m.writeMetricHeader(&metrics, "octojoin_last_updated_timestamp", "gauge", "Unix timestamp of last state update")
-		m.writeMetric(&metrics, "octojoin_last_updated_timestamp", nil, float64(m.monitor.state.LastUpdated.Unix()))
+		m.writeMetricHeader(&metrics, "octojoin_last_updated_timestamp_seconds", "gauge", "Unix timestamp of last state update")
+		// Format timestamp to avoid scientific notation
+		timestamp := float64(m.monitor.state.LastUpdated.Unix())
+		m.writeMetric(&metrics, "octojoin_last_updated_timestamp_seconds", nil, timestamp)
 		
 		// Cache metrics
 		if m.monitor.state.CachedSavingSessions != nil {
@@ -199,13 +201,19 @@ func (m *MetricsCollector) writeMetricHeader(sb *strings.Builder, name, metricTy
 
 // writeMetric writes a metric with optional labels
 func (m *MetricsCollector) writeMetric(sb *strings.Builder, name string, labels map[string]string, value float64) {
+	// Use %.0f for timestamps to avoid scientific notation, %g for other values
+	format := "%g"
+	if strings.Contains(name, "timestamp") {
+		format = "%.0f"
+	}
+	
 	if len(labels) > 0 {
 		var labelPairs []string
 		for key, val := range labels {
 			labelPairs = append(labelPairs, fmt.Sprintf(`%s="%s"`, key, val))
 		}
-		sb.WriteString(fmt.Sprintf("%s{%s} %g\n", name, strings.Join(labelPairs, ","), value))
+		sb.WriteString(fmt.Sprintf("%s{%s} "+format+"\n", name, strings.Join(labelPairs, ","), value))
 	} else {
-		sb.WriteString(fmt.Sprintf("%s %g\n", name, value))
+		sb.WriteString(fmt.Sprintf("%s "+format+"\n", name, value))
 	}
 }
