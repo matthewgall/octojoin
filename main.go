@@ -24,7 +24,7 @@ import (
 
 func main() {
 	var accountID, apiKey, configPath string
-	var daemon, webUI, debug, showVersion bool
+	var daemon, webUI, debug, showVersion, noSmartIntervals bool
 	var minPoints, webPort int
 	
 	flag.StringVar(&configPath, "config", "", "Path to configuration file")
@@ -36,6 +36,7 @@ func main() {
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	flag.IntVar(&minPoints, "min-points", 0, "Minimum points threshold to join a session (0 = join all sessions)")
 	flag.IntVar(&webPort, "port", 8080, "Web UI port (default: 8080)")
+	flag.BoolVar(&noSmartIntervals, "no-smart-intervals", false, "Disable smart interval adjustment (use fixed intervals)")
 	flag.Parse()
 
 	// Handle version flag
@@ -93,6 +94,10 @@ func main() {
 	// Initialize monitor
 	monitor := NewSavingSessionMonitor(client, accountID)
 	monitor.SetMinPointsThreshold(minPoints)
+	
+	// Configure smart intervals (command line flag takes precedence over config)
+	disableSmartIntervals := noSmartIntervals || config.NoSmartIntervals
+	monitor.SetSmartIntervals(!disableSmartIntervals)
 	
 	// Set custom check interval if specified in config
 	if config.CheckInterval > 0 && config.CheckInterval != 10 {

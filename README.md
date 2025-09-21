@@ -49,6 +49,7 @@ cp config.example.yaml config.yaml
 | `-port` | Web UI port | 8080 |
 | `-min-points` | Minimum points to join session | 0 (join all) |
 | `-debug` | Enable debug logging | false |
+| `-no-smart-intervals` | Disable smart interval adjustment | false |
 
 ### Configuration File (config.yaml)
 ```yaml
@@ -59,6 +60,7 @@ web_ui: true
 web_port: 8080
 min_points: 100
 debug: false
+no_smart_intervals: false
 ```
 
 ### Getting Your Credentials
@@ -158,7 +160,12 @@ Feature Status:
 ## How it Works
 
 - **One-Shot Mode**: Run once and exit (default) - ideal for cron jobs
-- **Daemon Mode**: Continuous monitoring every 15 minutes  
+- **Daemon Mode**: Continuous monitoring with smart interval adjustment
+- **Smart Intervals**: Dynamic timing based on UK business hours and session patterns
+  - Peak hours (2-4 PM weekdays): 5-minute checks for faster session detection
+  - Business hours (9 AM-6 PM weekdays): 10-minute intervals
+  - Off-peak (evenings/weekends): 30-minute intervals  
+  - Event-driven: Increased frequency after finding new sessions
 - **Smart Filtering**: Only joins sessions meeting your points threshold
 - **Intelligent Caching**: Optimized API usage based on real-world update patterns
 - **State Persistence**: Session tracking stored in `~/.config/octojoin/`

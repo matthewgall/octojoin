@@ -21,14 +21,15 @@ import (
 )
 
 type Config struct {
-	AccountID    string `yaml:"account_id"`
-	APIKey       string `yaml:"api_key"`
-	Daemon       bool   `yaml:"daemon"`
-	MinPoints    int    `yaml:"min_points"`
-	CheckInterval int   `yaml:"check_interval_minutes"`
-	WebUI        bool   `yaml:"web_ui"`
-	WebPort      int    `yaml:"web_port"`
-	Debug        bool   `yaml:"debug"`
+	AccountID        string `yaml:"account_id"`
+	APIKey           string `yaml:"api_key"`
+	Daemon           bool   `yaml:"daemon"`
+	MinPoints        int    `yaml:"min_points"`
+	CheckInterval    int    `yaml:"check_interval_minutes"`
+	WebUI            bool   `yaml:"web_ui"`
+	WebPort          int    `yaml:"web_port"`
+	Debug            bool   `yaml:"debug"`
+	NoSmartIntervals bool   `yaml:"no_smart_intervals"`
 }
 
 func LoadConfig(configPath string) (*Config, error) {

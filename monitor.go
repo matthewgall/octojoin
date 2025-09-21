@@ -30,13 +30,16 @@ type FreeElectricityAlertState struct {
 }
 
 type SavingSessionMonitor struct {
-	client             *OctopusClient
-	state              *AppState
-	accountID          string
-	checkInterval      time.Duration
-	stopCh             chan struct{}
-	minPointsThreshold int
-	webServer          *WebServer
+	client               *OctopusClient
+	state                *AppState
+	accountID            string
+	checkInterval        time.Duration
+	stopCh               chan struct{}
+	minPointsThreshold   int
+	webServer            *WebServer
+	useSmartIntervals    bool
+	consecutiveEmptyChecks int
+	lastNewSessionTime   time.Time
 }
 
 func NewSavingSessionMonitor(client *OctopusClient, accountID string) *SavingSessionMonitor {
@@ -63,6 +66,7 @@ func NewSavingSessionMonitor(client *OctopusClient, accountID string) *SavingSes
 		checkInterval:      15 * time.Minute,
 		stopCh:             make(chan struct{}),
 		minPointsThreshold: 0,
+		useSmartIntervals:  true,
 	}
 }
 
@@ -74,12 +78,65 @@ func (m *SavingSessionMonitor) SetCheckInterval(interval time.Duration) {
 	m.checkInterval = interval
 }
 
+func (m *SavingSessionMonitor) SetSmartIntervals(enabled bool) {
+	m.useSmartIntervals = enabled
+}
+
+// getSmartInterval returns an intelligent check interval based on UK time and context
+func (m *SavingSessionMonitor) getSmartInterval() time.Duration {
+	if !m.useSmartIntervals {
+		return m.checkInterval
+	}
+	
+	// Load UK timezone
+	ukLocation, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		// Fallback to UTC if timezone loading fails
+		ukLocation = time.UTC
+	}
+	
+	now := time.Now().In(ukLocation)
+	hour := now.Hour()
+	weekday := now.Weekday()
+	
+	// Recently found new sessions - check more frequently for a batch
+	if !m.lastNewSessionTime.IsZero() && time.Since(m.lastNewSessionTime) < 30*time.Minute {
+		return 5 * time.Minute
+	}
+	
+	// Peak announcement window (2-4 PM UK time, weekdays)
+	if hour >= 14 && hour < 16 && weekday >= time.Monday && weekday <= time.Friday {
+		return 5 * time.Minute
+	}
+	
+	// Business hours (9 AM - 6 PM, weekdays)
+	if hour >= 9 && hour < 18 && weekday >= time.Monday && weekday <= time.Friday {
+		return 10 * time.Minute
+	}
+	
+	// Event-driven backoff based on consecutive empty checks
+	if m.consecutiveEmptyChecks > 0 {
+		// Gradually increase: 15min → 20min → 25min → 30min (max)
+		backoffMinutes := 15 + (5 * m.consecutiveEmptyChecks)
+		if backoffMinutes > 30 {
+			backoffMinutes = 30
+		}
+		return time.Duration(backoffMinutes) * time.Minute
+	}
+	
+	// Off-peak hours (evenings, nights, weekends)
+	return 30 * time.Minute
+}
+
 func (m *SavingSessionMonitor) EnableWebUI(port int) {
 	m.webServer = NewWebServer(m, port)
 }
 
 func (m *SavingSessionMonitor) Start() {
 	log.Println("Starting saving session monitoring...")
+	if m.useSmartIntervals {
+		log.Println("Smart interval adjustment enabled")
+	}
 	
 	// Start web server if enabled
 	if m.webServer != nil {
@@ -90,19 +147,28 @@ func (m *SavingSessionMonitor) Start() {
 		}()
 	}
 	
-	ticker := time.NewTicker(m.checkInterval)
-	defer ticker.Stop()
-
+	// Initial check
 	m.checkForNewSessions()
-
+	
+	// Dynamic interval monitoring
 	for {
+		interval := m.getSmartInterval()
+		timer := time.NewTimer(interval)
+		
+		if m.useSmartIntervals {
+			log.Printf("Next check in %s", m.formatDuration(interval))
+		}
+		
 		select {
-		case <-ticker.C:
+		case <-timer.C:
 			m.checkForNewSessions()
 		case <-m.stopCh:
+			timer.Stop()
 			log.Println("Stopping saving session monitoring...")
 			return
 		}
+		
+		timer.Stop()
 	}
 }
 
@@ -113,11 +179,31 @@ func (m *SavingSessionMonitor) Stop() {
 func (m *SavingSessionMonitor) checkForNewSessions() {
 	log.Println("Checking for new sessions...")
 	
+	foundNewSessions := false
+	
 	// Check saving sessions
-	m.checkSavingSessions()
+	if m.checkSavingSessions() {
+		foundNewSessions = true
+	}
 	
 	// Check free electricity sessions
-	m.checkFreeElectricitySessions()
+	if m.checkFreeElectricitySessions() {
+		foundNewSessions = true
+	}
+	
+	// Update event-driven tracking
+	if foundNewSessions {
+		m.lastNewSessionTime = time.Now()
+		m.consecutiveEmptyChecks = 0
+		if m.useSmartIntervals {
+			log.Println("🎯 New sessions found - will check more frequently for potential batches")
+		}
+	} else {
+		m.consecutiveEmptyChecks++
+		if m.useSmartIntervals && m.consecutiveEmptyChecks > 1 {
+			log.Printf("📉 No new sessions found (%d consecutive checks) - extending next interval", m.consecutiveEmptyChecks)
+		}
+	}
 	
 	// Save state after checks
 	if err := m.state.Save(m.accountID); err != nil {
@@ -125,12 +211,14 @@ func (m *SavingSessionMonitor) checkForNewSessions() {
 	}
 }
 
-func (m *SavingSessionMonitor) checkSavingSessions() {
+func (m *SavingSessionMonitor) checkSavingSessions() bool {
 	response, err := m.client.GetSavingSessionsWithCache(m.state)
 	if err != nil {
 		log.Printf("Error fetching saving sessions: %v", err)
-		return
+		return false
 	}
+	
+	foundNewSessions := false
 
 	log.Printf("Current points in wallet: %d", response.Data.OctoPoints.Account.CurrentPointsInWallet)
 
@@ -150,6 +238,7 @@ func (m *SavingSessionMonitor) checkSavingSessions() {
 
 	for _, session := range response.Data.SavingSessions.Account.JoinedEvents {
 		if !m.state.KnownSessions[session.EventID] {
+			foundNewSessions = true
 			now := time.Now()
 			duration := session.EndAt.Sub(session.StartAt)
 			
@@ -192,22 +281,30 @@ func (m *SavingSessionMonitor) checkSavingSessions() {
 	if len(response.Data.SavingSessions.Account.JoinedEvents) == 0 {
 		log.Println("No saving sessions found")
 	}
+	
+	return foundNewSessions
 }
 
-func (m *SavingSessionMonitor) checkFreeElectricitySessions() {
+func (m *SavingSessionMonitor) checkFreeElectricitySessions() bool {
 	response, err := m.client.GetFreeElectricitySessionsWithCache(m.state)
 	if err != nil {
 		log.Printf("Error fetching free electricity sessions: %v", err)
-		return
+		return false
 	}
 
 	currentSessionsFound := 0
+	foundNewSessions := false
 	for _, session := range response.Data {
 		now := time.Now()
 		
 		// Skip sessions that have already ended
 		if session.EndAt.Before(now) {
 			continue
+		}
+		
+		// Check if this is a new session
+		if !m.state.KnownFreeElectricitySessions[session.Code] {
+			foundNewSessions = true
 		}
 		
 		// Track that we've seen this session
@@ -256,6 +353,8 @@ func (m *SavingSessionMonitor) checkFreeElectricitySessions() {
 	if currentSessionsFound == 0 {
 		log.Println("No current or upcoming free electricity sessions found")
 	}
+	
+	return foundNewSessions
 }
 
 func (m *SavingSessionMonitor) CheckOnce() {
