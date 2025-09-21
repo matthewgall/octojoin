@@ -211,7 +211,7 @@ The web server exposes Prometheus-compatible metrics at `/metrics` for monitorin
 - `octojoin_free_electricity_sessions_total` - Total free electricity sessions
 - `octojoin_free_electricity_sessions_upcoming` - Upcoming free electricity sessions
 - `octojoin_known_sessions_total` - Total sessions tracked in state
-- `octojoin_cache_age_seconds{cache_type="name"}` - Age of cached data in seconds
+- `octojoin_cache_age_seconds{cache_type="name"}` - Age of cached data in seconds (saving_sessions, campaign_status, free_electricity, octo_points, wheel_of_fortune_spins, account_info)
 
 **Example Grafana queries:**
 ```promql
@@ -224,8 +224,14 @@ octojoin_octopoints_total
 # Wheel of Fortune spins availability
 sum(octojoin_wheel_spins_total)
 
-# Cache hit efficiency
+# Cache age monitoring
+octojoin_cache_age_seconds
+
+# Cache freshness (under 5 minutes)
 octojoin_cache_age_seconds < 300
+
+# Account balance cache efficiency (should be < 3600 seconds)
+octojoin_cache_age_seconds{cache_type="account_info"} < 3600
 ```
 
 ### Security Notes

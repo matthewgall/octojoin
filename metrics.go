@@ -165,6 +165,27 @@ func (m *MetricsCollector) collectMetrics() string {
 				"cache_type": "free_electricity",
 			}, cacheAge)
 		}
+		
+		if m.monitor.state.CachedOctoPoints != nil {
+			cacheAge := time.Since(m.monitor.state.CachedOctoPoints.Timestamp).Seconds()
+			m.writeMetric(&metrics, "octojoin_cache_age_seconds", map[string]string{
+				"cache_type": "octo_points",
+			}, cacheAge)
+		}
+		
+		if m.monitor.state.CachedWheelOfFortuneSpins != nil {
+			cacheAge := time.Since(m.monitor.state.CachedWheelOfFortuneSpins.Timestamp).Seconds()
+			m.writeMetric(&metrics, "octojoin_cache_age_seconds", map[string]string{
+				"cache_type": "wheel_of_fortune_spins",
+			}, cacheAge)
+		}
+		
+		if m.monitor.state.CachedAccountInfo != nil {
+			cacheAge := time.Since(m.monitor.state.CachedAccountInfo.Timestamp).Seconds()
+			m.writeMetric(&metrics, "octojoin_cache_age_seconds", map[string]string{
+				"cache_type": "account_info",
+			}, cacheAge)
+		}
 	}
 	
 	return metrics.String()
