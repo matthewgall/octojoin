@@ -60,7 +60,7 @@ func NewSavingSessionMonitor(client *OctopusClient, accountID string) *SavingSes
 		client:             client,
 		state:              state,
 		accountID:          accountID,
-		checkInterval:      10 * time.Minute,
+		checkInterval:      15 * time.Minute,
 		stopCh:             make(chan struct{}),
 		minPointsThreshold: 0,
 	}

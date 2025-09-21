@@ -158,7 +158,7 @@ Feature Status:
 ## How it Works
 
 - **One-Shot Mode**: Run once and exit (default) - ideal for cron jobs
-- **Daemon Mode**: Continuous monitoring every 10 minutes  
+- **Daemon Mode**: Continuous monitoring every 15 minutes  
 - **Smart Filtering**: Only joins sessions meeting your points threshold
 - **Intelligent Caching**: Optimized API usage based on real-world update patterns
 - **State Persistence**: Session tracking stored in `~/.config/octojoin/`
