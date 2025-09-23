@@ -188,6 +188,20 @@ func (m *MetricsCollector) collectMetrics() string {
 				"cache_type": "account_info",
 			}, cacheAge)
 		}
+		
+		if m.monitor.state.CachedMeterDevices != nil {
+			cacheAge := time.Since(m.monitor.state.CachedMeterDevices.Timestamp).Seconds()
+			m.writeMetric(&metrics, "octojoin_cache_age_seconds", map[string]string{
+				"cache_type": "meter_devices",
+			}, cacheAge)
+		}
+		
+		if m.monitor.state.CachedUsageMeasurements != nil {
+			cacheAge := time.Since(m.monitor.state.CachedUsageMeasurements.Timestamp).Seconds()
+			m.writeMetric(&metrics, "octojoin_cache_age_seconds", map[string]string{
+				"cache_type": "usage_measurements",
+			}, cacheAge)
+		}
 	}
 	
 	return metrics.String()

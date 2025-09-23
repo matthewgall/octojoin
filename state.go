@@ -52,6 +52,17 @@ type CachedAccountInfo struct {
 	Timestamp time.Time    `json:"timestamp"`
 }
 
+type CachedMeterDevices struct {
+	Data      []string  `json:"data"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type CachedUsageMeasurements struct {
+	Data      []UsageMeasurement `json:"data"`
+	Timestamp time.Time          `json:"timestamp"`
+	Days      int                `json:"days"` // Track how many days of data this represents
+}
+
 type AppState struct {
 	AlertStates                map[string]*FreeElectricityAlertState `json:"alert_states"`
 	KnownSessions             map[int]bool                          `json:"known_sessions"`
@@ -62,6 +73,8 @@ type AppState struct {
 	CachedOctoPoints          *CachedOctoPoints                     `json:"cached_octo_points,omitempty"`
 	CachedWheelOfFortuneSpins *CachedWheelOfFortuneSpins            `json:"cached_wheel_of_fortune_spins,omitempty"`
 	CachedAccountInfo         *CachedAccountInfo                    `json:"cached_account_info,omitempty"`
+	CachedMeterDevices        *CachedMeterDevices                   `json:"cached_meter_devices,omitempty"`
+	CachedUsageMeasurements   *CachedUsageMeasurements              `json:"cached_usage_measurements,omitempty"`
 	JWTToken                  string                                `json:"jwt_token,omitempty"`
 	JWTTokenExpiry            time.Time                             `json:"jwt_token_expiry,omitempty"`
 	LastUpdated               time.Time                             `json:"last_updated"`

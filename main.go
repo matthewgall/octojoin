@@ -19,12 +19,29 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 )
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func getEstimatedCost(m UsageMeasurement) float64 {
+	if len(m.MetaData.Statistics) > 0 {
+		if val, err := strconv.ParseFloat(m.MetaData.Statistics[0].CostInclTax.EstimatedAmount, 64); err == nil {
+			return val
+		}
+	}
+	return 0.0
+}
+
 func main() {
 	var accountID, apiKey, configPath string
-	var daemon, webUI, debug, showVersion, noSmartIntervals bool
+	var daemon, webUI, debug, showVersion, noSmartIntervals, testMeter bool
 	var minPoints, webPort int
 	
 	flag.StringVar(&configPath, "config", "", "Path to configuration file")
@@ -37,6 +54,7 @@ func main() {
 	flag.IntVar(&minPoints, "min-points", 0, "Minimum points threshold to join a session (0 = join all sessions)")
 	flag.IntVar(&webPort, "port", 8080, "Web UI port (default: 8080)")
 	flag.BoolVar(&noSmartIntervals, "no-smart-intervals", false, "Disable smart interval adjustment (use fixed intervals)")
+	flag.BoolVar(&testMeter, "test-meter", false, "Test smart meter data retrieval and exit")
 	flag.Parse()
 
 	// Handle version flag
@@ -90,6 +108,48 @@ func main() {
 
 	// Initialize API client
 	client := NewOctopusClient(accountID, apiKey, debug)
+	
+	// Handle meter testing flag
+	if testMeter {
+		log.Println("Testing smart meter data retrieval...")
+		
+		// Initialize state for caching
+		monitor := NewSavingSessionMonitor(client, accountID)
+		
+		// Test meter device discovery
+		devices, err := client.getSmartMeterDevicesWithCache(monitor.state)
+		if err != nil {
+			log.Fatalf("Failed to get meter devices: %v", err)
+		}
+		
+		log.Printf("✅ Found %d ESME devices:", len(devices))
+		for i, device := range devices {
+			log.Printf("   %d. %s", i+1, device)
+		}
+		
+		if len(devices) > 0 {
+			// Test usage measurements for last 7 days
+			measurements, err := client.getUsageMeasurementsWithCache(monitor.state, 7)
+			if err != nil {
+				log.Fatalf("Failed to get usage measurements: %v", err)
+			}
+			
+			log.Printf("✅ Retrieved %d usage measurements for last 7 days", len(measurements))
+			if len(measurements) > 0 {
+				// Show sample measurements
+				log.Printf("Sample measurements:")
+				for i, m := range measurements[:min(5, len(measurements))] {
+					log.Printf("   %d. %s: %.3f %s (Cost: £%.4f)", 
+						i+1, m.StartAt.Format("2006-01-02 15:04"), 
+						m.GetValueAsFloat64(), m.Unit,
+						getEstimatedCost(m))
+				}
+			}
+		}
+		
+		log.Println("Meter testing completed successfully!")
+		return
+	}
 	
 	// Initialize monitor
 	monitor := NewSavingSessionMonitor(client, accountID)

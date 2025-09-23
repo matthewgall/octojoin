@@ -20,6 +20,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -59,6 +60,8 @@ func NewWebServer(monitor *SavingSessionMonitor, port int) *WebServer {
 	
 	mux.HandleFunc("/", ws.handleDashboard)
 	mux.HandleFunc("/api/sessions", ws.handleSessionsAPI)
+	mux.HandleFunc("/api/usage", ws.handleUsageAPI)
+	mux.HandleFunc("/api/usage/refresh", ws.handleUsageRefreshAPI)
 	
 	// Add Prometheus metrics endpoint
 	metricsCollector := NewMetricsCollector(monitor.client, monitor)
@@ -70,6 +73,13 @@ func NewWebServer(monitor *SavingSessionMonitor, port int) *WebServer {
 func (ws *WebServer) Start() error {
 	log.Printf("Starting web server on %s", ws.server.Addr)
 	return ws.server.ListenAndServe()
+}
+
+func getCacheAge(cached *CachedUsageMeasurements) int {
+	if cached == nil {
+		return -1
+	}
+	return int(time.Since(cached.Timestamp).Seconds())
 }
 
 func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
@@ -173,6 +183,135 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(data)
 }
 
+func (ws *WebServer) handleUsageAPI(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	daysParam := r.URL.Query().Get("days")
+	days := 7 // default to 7 days
+	if daysParam != "" {
+		if d, err := fmt.Sscanf(daysParam, "%d", &days); err == nil && d > 0 {
+			if days > 30 {
+				days = 30 // max 30 days
+			}
+		}
+	}
+	
+	// Get usage measurements with caching
+	measurements, err := ws.monitor.client.getUsageMeasurementsWithCache(ws.monitor.state, days)
+	if err != nil {
+		log.Printf("Error getting usage measurements: %v", err)
+		http.Error(w, "Failed to get usage data", http.StatusInternalServerError)
+		return
+	}
+	
+	// Transform measurements for Chart.js
+	var chartData []map[string]interface{}
+	for _, m := range measurements {
+		costEstimate := 0.0
+		if len(m.MetaData.Statistics) > 0 {
+			if val, err := strconv.ParseFloat(m.MetaData.Statistics[0].CostInclTax.EstimatedAmount, 64); err == nil {
+				costEstimate = val
+			}
+		}
+		
+		chartData = append(chartData, map[string]interface{}{
+			"timestamp": m.StartAt.Unix() * 1000, // JavaScript timestamp
+			"datetime":  m.StartAt.Format("2006-01-02T15:04:05Z07:00"),
+			"value":     m.GetValueAsFloat64(),
+			"unit":      m.Unit,
+			"cost":      costEstimate,
+			"duration":  m.Duration,
+		})
+	}
+	
+	response := map[string]interface{}{
+		"success":      true,
+		"days":         days,
+		"measurements": len(measurements),
+		"data":         chartData,
+		"cache_age":    getCacheAge(ws.monitor.state.CachedUsageMeasurements),
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (ws *WebServer) handleUsageRefreshAPI(w http.ResponseWriter, r *http.Request) {
+	// Force cache invalidation by clearing cached usage measurements
+	if ws.monitor.state != nil {
+		ws.monitor.state.CachedUsageMeasurements = nil
+		log.Println("Cleared usage measurements cache")
+	}
+	
+	// Parse query parameters
+	daysParam := r.URL.Query().Get("days")
+	days := 7 // default to 7 days
+	if daysParam != "" {
+		if d, err := fmt.Sscanf(daysParam, "%d", &days); err == nil && d > 0 {
+			if days > 30 {
+				days = 30 // max 30 days
+			}
+		}
+	}
+	
+	// Get fresh usage measurements (bypassing cache)
+	measurements, err := ws.monitor.client.getUsageMeasurements([]string{}, days)
+	if err != nil {
+		// Get device IDs first
+		devices, err := ws.monitor.client.getSmartMeterDevicesWithCache(ws.monitor.state)
+		if err != nil {
+			log.Printf("Error getting meter devices: %v", err)
+			http.Error(w, "Failed to get meter devices", http.StatusInternalServerError)
+			return
+		}
+		
+		if len(devices) == 0 {
+			http.Error(w, "No ESME devices found", http.StatusInternalServerError)
+			return
+		}
+		
+		measurements, err = ws.monitor.client.getUsageMeasurements(devices, days)
+		if err != nil {
+			log.Printf("Error getting fresh usage measurements: %v", err)
+			http.Error(w, "Failed to get fresh usage data", http.StatusInternalServerError)
+			return
+		}
+	}
+	
+	// Transform measurements for Chart.js
+	var chartData []map[string]interface{}
+	for _, m := range measurements {
+		costEstimate := 0.0
+		if len(m.MetaData.Statistics) > 0 {
+			if val, err := strconv.ParseFloat(m.MetaData.Statistics[0].CostInclTax.EstimatedAmount, 64); err == nil {
+				costEstimate = val
+			}
+		}
+		
+		chartData = append(chartData, map[string]interface{}{
+			"timestamp": m.StartAt.Unix() * 1000, // JavaScript timestamp
+			"datetime":  m.StartAt.Format("2006-01-02T15:04:05Z07:00"),
+			"value":     m.GetValueAsFloat64(),
+			"unit":      m.Unit,
+			"cost":      costEstimate,
+			"duration":  m.Duration,
+		})
+	}
+	
+	response := map[string]interface{}{
+		"success":      true,
+		"days":         days,
+		"measurements": len(measurements),
+		"data":         chartData,
+		"cache_age":    0, // Fresh data
+		"refreshed":    true,
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(response)
+}
+
 func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	const dashboardHTML = `<!DOCTYPE html>
 <html lang="en">
@@ -233,7 +372,13 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
         
         .sections {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            grid-template-columns: 1fr 2fr;
+            gap: 30px;
+        }
+        
+        .sessions-column {
+            display: flex;
+            flex-direction: column;
             gap: 30px;
         }
         
@@ -353,11 +498,79 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
                 grid-template-columns: 1fr;
             }
             
+            .sessions-column {
+                gap: 20px;
+            }
+            
             .header h1 {
                 font-size: 2rem;
             }
         }
+        
+        .usage-section {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 25px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 500px;
+            margin: 20px 0;
+        }
+        
+        .usage-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 500px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        .usage-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-left: 4px solid #4ade80;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .usage-controls {
+            margin: 15px 0;
+            text-align: center;
+        }
+        
+        .usage-controls button {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 8px 16px;
+            margin: 0 5px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .usage-controls button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .usage-controls button.active {
+            background: rgba(255, 255, 255, 0.4);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 </head>
 <body>
     <div class="container">
@@ -371,19 +584,36 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
         </div>
         
         <div class="sections" id="sections" style="display: none;">
-            <div class="section">
-                <h2>⚡ What Sessions Can I Join?</h2>
-                <div id="campaign-status"></div>
+            <div class="sessions-column">
+                <div class="section">
+                    <h2>⚡ What Sessions Can I Join?</h2>
+                    <div id="campaign-status"></div>
+                </div>
+                
+                <div class="section">
+                    <h2>💡 Saving Sessions</h2>
+                    <div id="saving-sessions"></div>
+                </div>
+                
+                <div class="section">
+                    <h2>🔋 Free Electricity Sessions</h2>
+                    <div id="free-electricity-sessions"></div>
+                </div>
             </div>
             
-            <div class="section">
-                <h2>💡 Saving Sessions</h2>
-                <div id="saving-sessions"></div>
-            </div>
-            
-            <div class="section">
-                <h2>🔋 Free Electricity Sessions</h2>
-                <div id="free-electricity-sessions"></div>
+            <div class="section usage-section">
+                <h2>📊 Electricity Usage</h2>
+                <div class="usage-controls">
+                    <button onclick="loadUsageData(1)" id="btn-1day">1 Day</button>
+                    <button onclick="loadUsageData(3)" id="btn-3days">3 Days</button>
+                    <button onclick="loadUsageData(7)" id="btn-7days" class="active">7 Days</button>
+                    <button onclick="loadUsageData(14)" id="btn-14days">14 Days</button>
+                    <button onclick="loadUsageData(30)" id="btn-30days">30 Days</button>
+                </div>
+                <div class="chart-container">
+                    <canvas id="usageChart"></canvas>
+                </div>
+                <div id="usage-stats"></div>
             </div>
         </div>
         
@@ -620,8 +850,178 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
                 });
         }
         
+        // Usage chart variables
+        let usageChart = null;
+        let currentDays = 7;
+        
+        function loadUsageData(days) {
+            currentDays = days;
+            
+            // Update active button
+            document.querySelectorAll('.usage-controls button').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('btn-' + days + (days === 1 ? 'day' : 'days')).classList.add('active');
+            
+            // Show loading spinner
+            showUsageLoading();
+            
+            fetch('/api/usage?days=' + days)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateUsageChart(data);
+                        updateUsageStats(data);
+                    } else {
+                        console.error('Failed to load usage data:', data);
+                        showUsageError('Failed to load usage data');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading usage data:', error);
+                    showUsageError('Error loading usage data. Please try again.');
+                });
+        }
+        
+        function updateUsageChart(data) {
+            // Destroy existing chart
+            if (usageChart) {
+                usageChart.destroy();
+            }
+            
+            // Check if data is null or empty
+            if (!data.data || data.data.length === 0) {
+                // Show "No Data" message
+                const chartContainer = document.querySelector('.chart-container');
+                chartContainer.innerHTML = '<div style="text-align: center; padding: 50px; color: rgba(255, 255, 255, 0.7); font-size: 18px;">No Data Available</div>';
+                return;
+            }
+            
+            // Ensure canvas exists
+            const chartContainer = document.querySelector('.chart-container');
+            chartContainer.innerHTML = '<canvas id="usageChart"></canvas>';
+            const ctx = document.getElementById('usageChart').getContext('2d');
+            
+            // Prepare data for Chart.js
+            const chartData = data.data.map(point => ({
+                x: new Date(point.timestamp),
+                y: point.value,
+                cost: point.cost
+            }));
+            
+            usageChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'Electricity Usage (kWh)',
+                        data: chartData,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: currentDays <= 1 ? 'hour' : 'day'
+                            },
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.8)'
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.8)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: 'rgba(255, 255, 255, 0.8)'
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const point = context.raw;
+                                    return 'Usage: ' + point.y.toFixed(3) + ' kWh';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function updateUsageStats(data) {
+            // Check if data is null or empty
+            if (!data.data || data.data.length === 0) {
+                const statsHTML = '<div style="display: flex; justify-content: space-around; margin-top: 15px;">' +
+                    '<div><strong>Total Usage:</strong> No data</div>' +
+                    '<div><strong>Average:</strong> No data</div>' +
+                    '<div><strong>Data Points:</strong> 0</div>' +
+                    '<div><strong>Period:</strong> ' + data.days + ' days</div>' +
+                    '</div>';
+                document.getElementById('usage-stats').innerHTML = statsHTML;
+                return;
+            }
+            
+            const totalUsage = data.data.reduce((sum, point) => sum + point.value, 0);
+            const totalCost = data.data.reduce((sum, point) => sum + point.cost, 0);
+            const avgUsage = totalUsage / data.measurements;
+            
+            const statsHTML = '<div style="display: flex; justify-content: space-around; margin-top: 15px;">' +
+                '<div><strong>Total Usage:</strong> ' + totalUsage.toFixed(2) + ' kWh</div>' +
+                '<div><strong>Average:</strong> ' + avgUsage.toFixed(3) + ' kWh/reading</div>' +
+                '<div><strong>Data Points:</strong> ' + data.measurements + '</div>' +
+                '<div><strong>Period:</strong> ' + data.days + ' days</div>' +
+                '</div>';
+            
+            document.getElementById('usage-stats').innerHTML = statsHTML;
+        }
+        
+        function showUsageLoading() {
+            // Destroy existing chart
+            if (usageChart) {
+                usageChart.destroy();
+            }
+            
+            // Show loading spinner
+            const chartContainer = document.querySelector('.chart-container');
+            chartContainer.innerHTML = '<div class="usage-loading"><div class="usage-spinner"></div><div>Loading usage data...</div></div>';
+            
+            // Clear stats
+            document.getElementById('usage-stats').innerHTML = '';
+        }
+        
+        function showUsageError(message) {
+            // Destroy existing chart
+            if (usageChart) {
+                usageChart.destroy();
+            }
+            
+            // Show error message
+            const chartContainer = document.querySelector('.chart-container');
+            chartContainer.innerHTML = '<div style="text-align: center; padding: 50px; color: rgba(248, 113, 113, 0.8); font-size: 18px;">' + message + '</div>';
+            
+            // Clear stats
+            document.getElementById('usage-stats').innerHTML = '';
+        }
+        
         // Initial load
         updateDashboard();
+        loadUsageData(7); // Load 7 days of usage data by default
         
         // Auto-refresh every 30 seconds
         setInterval(updateDashboard, 30000);

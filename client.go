@@ -96,6 +96,75 @@ type SavingSessionsResponse struct {
 	} `json:"data"`
 }
 
+type SmartDevice struct {
+	DeviceID string `json:"deviceId"`
+	Type     string `json:"type"`
+}
+
+type SmartDeviceNetwork struct {
+	SmartDevices []SmartDevice `json:"smartDevices"`
+}
+
+type MeterEligibilityResponse struct {
+	Data struct {
+		Account struct {
+			Properties []struct {
+				ID                    string               `json:"id"`
+				Address               string               `json:"address"`
+				SmartDeviceNetworks   []SmartDeviceNetwork `json:"smartDeviceNetworks"`
+			} `json:"properties"`
+		} `json:"account"`
+	} `json:"data"`
+}
+
+type UsageMeasurement struct {
+	Value    string    `json:"value"` // API returns this as string, we'll parse it
+	Unit     string    `json:"unit"`
+	StartAt  time.Time `json:"startAt"`
+	EndAt    time.Time `json:"endAt"`
+	Duration int       `json:"durationInSeconds"`
+	MetaData struct {
+		Statistics []struct {
+			CostInclTax struct {
+				EstimatedAmount string `json:"estimatedAmount"` // API returns as string
+				CostCurrency    string `json:"costCurrency"`
+			} `json:"costInclTax"`
+			CostExclTax struct {
+				PricePerUnit struct {
+					Amount string `json:"amount"` // API returns as string
+				} `json:"pricePerUnit"`
+				EstimatedAmount string `json:"estimatedAmount"` // API returns as string
+				CostCurrency    string `json:"costCurrency"`
+			} `json:"costExclTax"`
+			Value       string `json:"value"`       // API returns as string
+			Description string `json:"description"`
+			Label       string `json:"label"`
+			Type        string `json:"type"`
+		} `json:"statistics"`
+	} `json:"metaData"`
+}
+
+type UsageMeasurementsResponse struct {
+	Data struct {
+		Account struct {
+			Properties []struct {
+				ID           string `json:"id"`
+				Measurements struct {
+					Edges []struct {
+						Node UsageMeasurement `json:"node"`
+					} `json:"edges"`
+					PageInfo struct {
+						HasNextPage     bool   `json:"hasNextPage"`
+						HasPreviousPage bool   `json:"hasPreviousPage"`
+						StartCursor     string `json:"startCursor"`
+						EndCursor       string `json:"endCursor"`
+					} `json:"pageInfo"`
+				} `json:"measurements"`
+			} `json:"properties"`
+		} `json:"account"`
+	} `json:"data"`
+}
+
 func NewOctopusClient(accountID, apiKey string, debug bool) *OctopusClient {
 	return &OctopusClient{
 		AccountID:   accountID,
@@ -998,4 +1067,275 @@ func (c *OctopusClient) getAccountInfo() (*AccountInfo, error) {
 	c.debugLog("Account balance: £%.2f, Account type: %s", accountInfo.Balance, accountInfo.AccountType)
 
 	return accountInfo, nil
+}
+
+// getSmartMeterDevices retrieves ESME (Electricity Smart Meter) device IDs
+func (c *OctopusClient) getSmartMeterDevices() ([]string, error) {
+	query := `query getEligibility($accountNumber: String!) {
+		account(accountNumber: $accountNumber) {
+			properties {
+				id
+				address
+				smartDeviceNetworks {
+					smartDevices {
+						deviceId
+						type
+						__typename
+					}
+					__typename
+				}
+				__typename
+			}
+			__typename
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"accountNumber": c.AccountID,
+	}
+
+	resp, err := c.makeGraphQLRequest(query, variables, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute meter eligibility request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result MeterEligibilityResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode meter eligibility response: %w", err)
+	}
+
+	var deviceIDs []string
+	for _, property := range result.Data.Account.Properties {
+		for _, network := range property.SmartDeviceNetworks {
+			for _, device := range network.SmartDevices {
+				// Only include ESME (Electricity Smart Meter) devices
+				if device.Type == "ESME" {
+					deviceIDs = append(deviceIDs, device.DeviceID)
+					c.debugLog("Found ESME device: %s", device.DeviceID)
+				}
+			}
+		}
+	}
+
+	c.debugLog("Found %d ESME devices", len(deviceIDs))
+	return deviceIDs, nil
+}
+
+// getUsageMeasurements retrieves electricity usage measurements for the last N days
+func (c *OctopusClient) getUsageMeasurements(deviceIDs []string, days int) ([]UsageMeasurement, error) {
+	if len(deviceIDs) == 0 {
+		return nil, fmt.Errorf("no device IDs provided")
+	}
+
+	// Use first device ID for now (most users have one electricity meter)
+	deviceID := deviceIDs[0]
+	
+	// Calculate time range
+	endTime := time.Now()
+	startTime := endTime.AddDate(0, 0, -days)
+	
+	c.debugLog("Fetching usage measurements: %d days from %s to %s", days, startTime.Format("2006-01-02 15:04"), endTime.Format("2006-01-02 15:04"))
+
+	query := `query getMeasurements($accountNumber: String!, $first: Int!, $utilityFilters: [UtilityFiltersInput!], $startAt: DateTime, $endAt: DateTime, $timezone: String) {
+		account(accountNumber: $accountNumber) {
+			properties {
+				id
+				measurements(
+					first: $first
+					utilityFilters: $utilityFilters
+					startAt: $startAt
+					endAt: $endAt
+					timezone: $timezone
+				) {
+					edges {
+						node {
+							value
+							unit
+							... on IntervalMeasurementType {
+								startAt
+								endAt
+								durationInSeconds
+								__typename
+							}
+							metaData {
+								statistics {
+									costExclTax {
+										pricePerUnit {
+											amount
+											__typename
+										}
+										costCurrency
+										estimatedAmount
+										__typename
+									}
+									costInclTax {
+										costCurrency
+										estimatedAmount
+										__typename
+									}
+									value
+									description
+									label
+									type
+									__typename
+								}
+								__typename
+							}
+							__typename
+						}
+						__typename
+					}
+					pageInfo {
+						hasNextPage
+						hasPreviousPage
+						startCursor
+						endCursor
+						__typename
+					}
+					__typename
+				}
+				__typename
+			}
+			__typename
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"accountNumber": c.AccountID,
+		"first":         1000, // Adjust based on expected data volume
+		"startAt":       startTime.Format(time.RFC3339),
+		"endAt":         endTime.Format(time.RFC3339),
+		"timezone":      "Europe/London",
+		"utilityFilters": []map[string]interface{}{
+			{
+				"electricityFilters": map[string]interface{}{
+					"readingFrequencyType": "RAW_INTERVAL",
+					"readingDirection":     "CONSUMPTION",
+					"deviceId":             deviceID,
+				},
+			},
+		},
+	}
+
+	resp, err := c.makeGraphQLRequest(query, variables, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute measurements request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result UsageMeasurementsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode measurements response: %w", err)
+	}
+
+	var measurements []UsageMeasurement
+	for _, property := range result.Data.Account.Properties {
+		for _, edge := range property.Measurements.Edges {
+			measurements = append(measurements, edge.Node)
+		}
+	}
+
+	c.debugLog("Retrieved %d usage measurements for device %s", len(measurements), deviceID)
+	
+	// Debug: Show first few measurements to understand data structure
+	if len(measurements) > 0 && c.debug {
+		c.debugLog("Sample measurements:")
+		sampleCount := len(measurements)
+		if sampleCount > 3 {
+			sampleCount = 3
+		}
+		for i, m := range measurements[:sampleCount] {
+			costStr := "no cost data"
+			if len(m.MetaData.Statistics) > 0 {
+				costStr = m.MetaData.Statistics[0].CostInclTax.EstimatedAmount
+			}
+			c.debugLog("  %d. %s: %s %s (Cost: %s)", i+1, m.StartAt.Format("2006-01-02 15:04"), m.Value, m.Unit, costStr)
+		}
+	}
+	
+	return measurements, nil
+}
+
+// GetValueAsFloat64 parses the string value as float64
+func (m *UsageMeasurement) GetValueAsFloat64() float64 {
+	if val, err := strconv.ParseFloat(m.Value, 64); err == nil {
+		return val
+	}
+	return 0.0
+}
+
+// getSmartMeterDevicesWithCache retrieves ESME device IDs with caching (7 days)
+func (c *OctopusClient) getSmartMeterDevicesWithCache(state *AppState) ([]string, error) {
+	if state != nil && state.CachedMeterDevices != nil {
+		if state.IsCacheValid(state.CachedMeterDevices.Timestamp, 7*24*time.Hour) {
+			return state.CachedMeterDevices.Data, nil
+		}
+	}
+
+	// Get fresh data
+	devices, err := c.getSmartMeterDevices()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	if state != nil {
+		state.CachedMeterDevices = &CachedMeterDevices{
+			Data:      devices,
+			Timestamp: time.Now(),
+		}
+	}
+
+	return devices, nil
+}
+
+// getUsageMeasurementsWithCache retrieves usage measurements with caching (30 minutes)
+func (c *OctopusClient) getUsageMeasurementsWithCache(state *AppState, days int) ([]UsageMeasurement, error) {
+	if state != nil && state.CachedUsageMeasurements != nil {
+		// Cache is valid if it's less than 30 minutes old and covers the same or more days
+		if state.IsCacheValid(state.CachedUsageMeasurements.Timestamp, 30*time.Minute) && 
+		   state.CachedUsageMeasurements.Days >= days {
+			c.debugLog("Using cached usage measurements (%d measurements, %d days, age: %v)", 
+				len(state.CachedUsageMeasurements.Data), state.CachedUsageMeasurements.Days, 
+				time.Since(state.CachedUsageMeasurements.Timestamp))
+			
+			// Filter cached data to only include the requested number of days
+			cutoffTime := time.Now().AddDate(0, 0, -days)
+			var filteredData []UsageMeasurement
+			for _, measurement := range state.CachedUsageMeasurements.Data {
+				if measurement.StartAt.After(cutoffTime) {
+					filteredData = append(filteredData, measurement)
+				}
+			}
+			return filteredData, nil
+		}
+	}
+
+	// Get device IDs first
+	devices, err := c.getSmartMeterDevicesWithCache(state)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get meter devices: %w", err)
+	}
+
+	if len(devices) == 0 {
+		return nil, fmt.Errorf("no ESME devices found")
+	}
+
+	// Get fresh usage data
+	measurements, err := c.getUsageMeasurements(devices, days)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	if state != nil {
+		state.CachedUsageMeasurements = &CachedUsageMeasurements{
+			Data:      measurements,
+			Timestamp: time.Now(),
+			Days:      days,
+		}
+	}
+
+	return measurements, nil
 }
