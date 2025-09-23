@@ -41,7 +41,7 @@ func getEstimatedCost(m UsageMeasurement) float64 {
 
 func main() {
 	var accountID, apiKey, configPath string
-	var daemon, webUI, debug, showVersion, noSmartIntervals, testMeter bool
+	var daemon, webUI, debug, showVersion, noSmartIntervals, runTest bool
 	var minPoints, webPort int
 	
 	flag.StringVar(&configPath, "config", "", "Path to configuration file")
@@ -54,7 +54,7 @@ func main() {
 	flag.IntVar(&minPoints, "min-points", 0, "Minimum points threshold to join a session (0 = join all sessions)")
 	flag.IntVar(&webPort, "port", 8080, "Web UI port (default: 8080)")
 	flag.BoolVar(&noSmartIntervals, "no-smart-intervals", false, "Disable smart interval adjustment (use fixed intervals)")
-	flag.BoolVar(&testMeter, "test-meter", false, "Test smart meter data retrieval and exit")
+	flag.BoolVar(&runTest, "test", false, "Run compatibility test to verify OctoJoin requirements and exit")
 	flag.Parse()
 
 	// Handle version flag
@@ -109,45 +109,140 @@ func main() {
 	// Initialize API client
 	client := NewOctopusClient(accountID, apiKey, debug)
 	
-	// Handle meter testing flag
-	if testMeter {
-		log.Println("Testing smart meter data retrieval...")
+	// Handle compatibility testing flag
+	if runTest {
+		log.Println("🔍 Running OctoJoin Compatibility Test...")
+		log.Println("===========================================")
 		
 		// Initialize state for caching
 		monitor := NewSavingSessionMonitor(client, accountID)
+		testPassed := true
 		
-		// Test meter device discovery
-		devices, err := client.getSmartMeterDevicesWithCache(monitor.state)
+		// Test 1: Basic API connectivity and account info
+		log.Println("\n1️⃣  Testing API connectivity and account access...")
+		accountInfo, err := client.getAccountInfo()
 		if err != nil {
-			log.Fatalf("Failed to get meter devices: %v", err)
+			log.Printf("❌ Failed to access account information: %v", err)
+			testPassed = false
+		} else {
+			log.Printf("✅ Account access successful")
+			log.Printf("   Balance: £%.2f", accountInfo.Balance)
+			log.Printf("   Account Type: %s", accountInfo.AccountType)
 		}
 		
-		log.Printf("✅ Found %d ESME devices:", len(devices))
-		for i, device := range devices {
-			log.Printf("   %d. %s", i+1, device)
+		// Test 2: Saving Sessions API
+		log.Println("\n2️⃣  Testing Saving Sessions API...")
+		sessions, err := client.GetSavingSessions()
+		if err != nil {
+			log.Printf("❌ Failed to access Saving Sessions: %v", err)
+			testPassed = false
+		} else {
+			log.Printf("✅ Saving Sessions API accessible")
+			log.Printf("   Current OctoPoints: %d", sessions.Data.OctoPoints.Account.CurrentPointsInWallet)
+			log.Printf("   Joined sessions: %d", len(sessions.Data.SavingSessions.Account.JoinedEvents))
+			log.Printf("   Campaign enrolled: %t", sessions.Data.SavingSessions.Account.HasJoinedCampaign)
+			
+			if !sessions.Data.SavingSessions.Account.HasJoinedCampaign {
+				log.Printf("⚠️  Warning: Not enrolled in Saving Sessions campaign")
+			}
 		}
 		
-		if len(devices) > 0 {
-			// Test usage measurements for last 7 days
-			measurements, err := client.getUsageMeasurementsWithCache(monitor.state, 7)
-			if err != nil {
-				log.Fatalf("Failed to get usage measurements: %v", err)
+		// Test 3: Campaign status
+		log.Println("\n3️⃣  Testing campaign enrollment status...")
+		campaigns, err := client.getCampaignStatus()
+		if err != nil {
+			log.Printf("❌ Failed to check campaign status: %v", err)
+			testPassed = false
+		} else {
+			log.Printf("✅ Campaign status accessible")
+			enrolledCount := 0
+			for campaign, enrolled := range campaigns {
+				status := "❌ Not enrolled"
+				if enrolled {
+					status = "✅ Enrolled"
+					enrolledCount++
+				}
+				log.Printf("   %s: %s", campaign, status)
 			}
 			
-			log.Printf("✅ Retrieved %d usage measurements for last 7 days", len(measurements))
-			if len(measurements) > 0 {
-				// Show sample measurements
-				log.Printf("Sample measurements:")
-				for i, m := range measurements[:min(5, len(measurements))] {
-					log.Printf("   %d. %s: %.3f %s (Cost: £%.4f)", 
-						i+1, m.StartAt.Format("2006-01-02 15:04"), 
-						m.GetValueAsFloat64(), m.Unit,
-						getEstimatedCost(m))
+			if enrolledCount == 0 {
+				log.Printf("⚠️  Warning: Not enrolled in any campaigns")
+			}
+		}
+		
+		// Test 4: Free Electricity Sessions
+		log.Println("\n4️⃣  Testing Free Electricity Sessions...")
+		freeElectricity, err := client.GetFreeElectricitySessions()
+		if err != nil {
+			log.Printf("❌ Failed to access Free Electricity Sessions: %v", err)
+			testPassed = false
+		} else {
+			log.Printf("✅ Free Electricity Sessions API accessible")
+			log.Printf("   Available sessions: %d", len(freeElectricity.Data))
+		}
+		
+		// Test 5: Smart meter device discovery
+		log.Println("\n5️⃣  Testing smart meter device discovery...")
+		devices, err := client.getSmartMeterDevicesWithCache(monitor.state)
+		if err != nil {
+			log.Printf("❌ Failed to discover smart meter devices: %v", err)
+			testPassed = false
+		} else {
+			log.Printf("✅ Found %d ESME (smart meter) devices:", len(devices))
+			for i, device := range devices {
+				log.Printf("   %d. %s", i+1, device)
+			}
+			
+			if len(devices) == 0 {
+				log.Printf("⚠️  Warning: No smart meter devices found - usage graphs will not work")
+			}
+		}
+		
+		// Test 6: Usage measurements (if smart meter available)
+		if len(devices) > 0 {
+			log.Println("\n6️⃣  Testing smart meter data retrieval...")
+			measurements, err := client.getUsageMeasurementsWithCache(monitor.state, 7)
+			if err != nil {
+				log.Printf("❌ Failed to retrieve usage measurements: %v", err)
+				testPassed = false
+			} else {
+				log.Printf("✅ Retrieved %d usage measurements for last 7 days", len(measurements))
+				if len(measurements) > 0 {
+					log.Printf("   Sample measurements:")
+					for i, m := range measurements[:min(3, len(measurements))] {
+						log.Printf("     %d. %s: %.3f %s", 
+							i+1, m.StartAt.Format("2006-01-02 15:04"), 
+							m.GetValueAsFloat64(), m.Unit)
+					}
+				} else {
+					log.Printf("⚠️  Warning: No usage data available - usage graphs will be empty")
 				}
 			}
 		}
 		
-		log.Println("Meter testing completed successfully!")
+		// Test 7: Wheel of Fortune spins
+		log.Println("\n7️⃣  Testing Wheel of Fortune...")
+		spins, err := client.getWheelOfFortuneSpins()
+		if err != nil {
+			log.Printf("❌ Failed to check Wheel of Fortune spins: %v", err)
+			testPassed = false
+		} else {
+			log.Printf("✅ Wheel of Fortune accessible")
+			log.Printf("   Electricity spins: %d", spins.ElectricitySpins)
+			log.Printf("   Gas spins: %d", spins.GasSpins)
+		}
+		
+		// Final results
+		log.Println("\n===========================================")
+		if testPassed {
+			log.Println("🎉 All tests passed! OctoJoin should work perfectly for your account.")
+			log.Println("   You can now run OctoJoin in daemon mode with: octojoin -daemon")
+		} else {
+			log.Println("❌ Some tests failed. Please check your credentials and account setup.")
+			log.Println("   Verify your account ID and API key are correct.")
+		}
+		log.Println("===========================================")
+		
 		return
 	}
 	
