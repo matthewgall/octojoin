@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -28,15 +27,6 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func getEstimatedCost(m UsageMeasurement) float64 {
-	if len(m.MetaData.Statistics) > 0 {
-		if val, err := strconv.ParseFloat(m.MetaData.Statistics[0].CostInclTax.EstimatedAmount, 64); err == nil {
-			return val
-		}
-	}
-	return 0.0
 }
 
 func main() {
