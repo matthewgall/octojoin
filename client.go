@@ -80,6 +80,21 @@ type WheelOfFortuneSpins struct {
 	GasSpins        int `json:"gas_spins"`
 }
 
+type WheelSpinResult struct {
+	Prize    int    `json:"prize"`     // OctoPoints earned from the spin
+	FuelType string `json:"fuel_type"` // "ELECTRICITY" or "GAS"
+}
+
+type WheelSpinResponse struct {
+	Data struct {
+		SpinWheelOfFortune struct {
+			Prize struct {
+				Value int `json:"value"`
+			} `json:"prize"`
+		} `json:"spinWheelOfFortune"`
+	} `json:"data"`
+}
+
 type SavingSessionsResponse struct {
 	Data struct {
 		SavingSessions struct {
@@ -966,6 +981,94 @@ func (c *OctopusClient) getWheelOfFortuneSpins() (*WheelOfFortuneSpins, error) {
 	c.debugLog("Wheel of Fortune spins: Electricity=%d, Gas=%d", spins.ElectricitySpins, spins.GasSpins)
 
 	return spins, nil
+}
+
+// spinWheelOfFortune performs a single spin of the Wheel of Fortune for the specified fuel type
+func (c *OctopusClient) spinWheelOfFortune(fuelType string) (*WheelSpinResult, error) {
+	c.debugLog("Spinning Wheel of Fortune for %s...", fuelType)
+
+	query := `mutation spinWheelOfFortune($input: WheelOfFortuneSpinInput!) {
+		spinWheelOfFortune(input: $input) {
+			prize {
+				value
+			}
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"input": map[string]interface{}{
+			"accountNumber": c.AccountID,
+			"fuelType":      fuelType,
+		},
+	}
+
+	c.debugLog("Spin query: %s", query)
+	c.debugLog("Spin variables: %+v", variables)
+
+	resp, err := c.makeGraphQLRequestWithEndpoint(getEndpoint("backend-graphql"), query, variables, true, "spinWheelOfFortune")
+	if err != nil {
+		c.debugLog("Spin request failed: %v", err)
+		return nil, fmt.Errorf("failed to execute spin request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the response body for debugging
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	c.debugLog("Spin response body: %s", string(bodyBytes))
+
+	var result WheelSpinResponse
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		c.debugLog("Failed to decode spin response: %v", err)
+		return nil, fmt.Errorf("failed to decode spin response: %w", err)
+	}
+
+	prize := result.Data.SpinWheelOfFortune.Prize.Value
+	c.debugLog("Wheel spin successful! Won %d OctoPoints for %s", prize, fuelType)
+
+	return &WheelSpinResult{
+		Prize:    prize,
+		FuelType: fuelType,
+	}, nil
+}
+
+// spinAllAvailableWheels spins all available wheels and returns the total prizes won
+func (c *OctopusClient) spinAllAvailableWheels(spins *WheelOfFortuneSpins) ([]WheelSpinResult, error) {
+	var results []WheelSpinResult
+	c.debugLog("Starting to spin wheels: Electricity=%d, Gas=%d", spins.ElectricitySpins, spins.GasSpins)
+	
+	// Spin electricity wheels
+	for i := 0; i < spins.ElectricitySpins; i++ {
+		c.debugLog("Spinning electricity wheel %d of %d", i+1, spins.ElectricitySpins)
+		result, err := c.spinWheelOfFortune("ELECTRICITY")
+		if err != nil {
+			log.Printf("Failed to spin electricity wheel %d: %v", i+1, err)
+			continue
+		}
+		results = append(results, *result)
+		log.Printf("🎰 Electricity wheel %d: Won %d OctoPoints", i+1, result.Prize)
+		// Small delay between spins to be respectful to the API
+		time.Sleep(1 * time.Second)
+	}
+	
+	// Spin gas wheels
+	for i := 0; i < spins.GasSpins; i++ {
+		c.debugLog("Spinning gas wheel %d of %d", i+1, spins.GasSpins)
+		result, err := c.spinWheelOfFortune("GAS")
+		if err != nil {
+			log.Printf("Failed to spin gas wheel %d: %v", i+1, err)
+			continue
+		}
+		results = append(results, *result)
+		log.Printf("🎰 Gas wheel %d: Won %d OctoPoints", i+1, result.Prize)
+		// Small delay between spins to be respectful to the API
+		time.Sleep(1 * time.Second)
+	}
+	
+	c.debugLog("Finished spinning wheels. Total results: %d", len(results))
+	return results, nil
 }
 
 type AccountInfo struct {

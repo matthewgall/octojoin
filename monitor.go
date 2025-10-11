@@ -231,6 +231,41 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 		if totalSpins > 0 {
 			log.Printf("🎰 Wheel of Fortune spins available: %d (Electricity: %d, Gas: %d)", 
 				totalSpins, spins.ElectricitySpins, spins.GasSpins)
+			
+			// Auto-spin all available wheels
+			log.Printf("🎯 Auto-spinning all available wheels...")
+			results, err := m.client.spinAllAvailableWheels(spins)
+			if err != nil {
+				log.Printf("❌ Error during auto-spinning: %v", err)
+			} else if len(results) > 0 {
+				totalPoints := 0
+				electricityPoints := 0
+				gasPoints := 0
+				
+				for _, result := range results {
+					totalPoints += result.Prize
+					if result.FuelType == "ELECTRICITY" {
+						electricityPoints += result.Prize
+					} else {
+						gasPoints += result.Prize
+					}
+				}
+				
+				log.Printf("🎉 Auto-spin complete! Total OctoPoints earned: %d", totalPoints)
+				if electricityPoints > 0 {
+					log.Printf("   ⚡ Electricity spins: %d OctoPoints", electricityPoints)
+				}
+				if gasPoints > 0 {
+					log.Printf("   🔥 Gas spins: %d OctoPoints", gasPoints)
+				}
+				
+				// Clear the cached spins so we check for new ones on next run
+				if m.state != nil {
+					m.state.CachedWheelOfFortuneSpins = nil
+				}
+			} else {
+				log.Printf("⚠️  No wheels were successfully spun")
+			}
 		} else {
 			log.Printf("🎰 No Wheel of Fortune spins available")
 		}
