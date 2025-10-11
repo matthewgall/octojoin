@@ -1,0 +1,88 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build OctoJoin",
+            "type": "shell",
+            "command": "go build -o octojoin .",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$go"]
+        },
+        {
+            "label": "Run Tests",
+            "type": "shell",
+            "command": "go test -v ./...",
+            "group": "test",
+            "problemMatcher": ["$go"]
+        },
+        {
+            "label": "Run OctoJoin (Debug)",
+            "type": "shell",
+            "command": "go run . -debug",
+            "problemMatcher": ["$go"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "Run OctoJoin (Daemon)",
+            "type": "shell",
+            "command": "go run . -daemon",
+            "problemMatcher": ["$go"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "Run OctoJoin (Web UI)",
+            "type": "shell",
+            "command": "go run . -web",
+            "problemMatcher": ["$go"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "Run Compatibility Test",
+            "type": "shell",
+            "command": "go run . -test",
+            "problemMatcher": ["$go"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "Run Staticcheck",
+            "type": "shell",
+            "command": "staticcheck ./...",
+            "problemMatcher": []
+        },
+        {
+            "label": "Format Code",
+            "type": "shell",
+            "command": "go fmt ./...",
+            "problemMatcher": []
+        },
+        {
+            "label": "Install Dependencies",
+            "type": "shell",
+            "command": "go mod download && go mod tidy",
+            "problemMatcher": []
+        },
+        {
+            "label": "Clean Build",
+            "type": "shell",
+            "command": "go clean && rm -f octojoin",
+            "problemMatcher": []
+        }
+    ]
+}
