@@ -1,11 +1,13 @@
 # OctoJoin
 
-A Go application that monitors Octopus Energy (UK) saving sessions and free electricity periods, automatically joining eligible sessions with a real-time web dashboard.
+A Go application that monitors Octopus Energy (UK) saving sessions and free electricity periods, automatically joining eligible sessions with a real-time web dashboard. Now with automatic Wheel of Fortune spinning and smart meter usage tracking!
 
 ## What it does
 
 - **Saving Sessions**: Automatically joins sessions that earn OctoPoints for reducing energy usage
-- **Free Electricity**: Monitors and alerts for periods of completely free electricity  
+- **Free Electricity**: Monitors and alerts for periods of completely free electricity
+- **Wheel of Fortune**: Automatically spins available wheels and collects OctoPoints 🎰
+- **Smart Meter Graphs**: Interactive usage visualization with Chart.js integration 📊
 - **Real-time Dashboard**: Live web interface with countdown timers and session status
 - **Smart Monitoring**: Configurable points threshold and continuous daemon mode
 
@@ -50,6 +52,7 @@ cp config.example.yaml config.yaml
 | `-min-points` | Minimum points to join session | 0 (join all) |
 | `-debug` | Enable debug logging | false |
 | `-no-smart-intervals` | Disable smart interval adjustment | false |
+| `-test` | Run compatibility test and exit | false |
 
 ### Configuration File (config.yaml)
 ```yaml
@@ -123,8 +126,11 @@ octojoin_cache_age_seconds < 300             # Cache freshness check
 ## Features
 
 - **Dual Session Support**: Monitors saving sessions and free electricity periods
-- **Automatic Joining**: Joins eligible saving sessions based on points threshold  
-- **Real-time Dashboard**: Live web interface with countdown timers
+- **Automatic Joining**: Joins eligible saving sessions based on points threshold
+- **Wheel of Fortune Auto-Spin**: Automatically spins available wheels and collects OctoPoints
+- **Smart Meter Integration**: Interactive usage graphs with multiple time periods (1-30 days)
+- **Real-time Dashboard**: Live web interface with countdown timers and usage visualization
+- **Compatibility Testing**: Comprehensive `-test` flag to verify all features work with your account
 - **Smart Caching**: Intelligent API caching based on real-world update patterns
 - **Multiple Run Modes**: One-shot, continuous daemon, or systemd service
 - **Robust Error Handling**: JWT token management, exponential backoff, rate limiting
@@ -155,6 +161,16 @@ Feature Status:
 2025/01/15 14:30:02 🔋 FREE ELECTRICITY SESSION
    Date: Wednesday, Jan 16 at 10:00 • Duration: 4h
    No action needed - automatically free!
+
+2025/01/15 14:30:03 🎰 Wheel of Fortune spins available: 4 (Electricity: 2, Gas: 2)
+2025/01/15 14:30:03 🎯 Auto-spinning all available wheels...
+2025/01/15 14:30:04 🎰 Electricity wheel 1: Won 8 OctoPoints
+2025/01/15 14:30:05 🎰 Electricity wheel 2: Won 8 OctoPoints
+2025/01/15 14:30:06 🎰 Gas wheel 1: Won 8 OctoPoints
+2025/01/15 14:30:07 🎰 Gas wheel 2: Won 8 OctoPoints
+2025/01/15 14:30:08 🎉 Auto-spin complete! Total OctoPoints earned: 32
+   ⚡ Electricity spins: 16 OctoPoints
+   🔥 Gas spins: 16 OctoPoints
 ```
 
 ## How it Works
@@ -164,12 +180,18 @@ Feature Status:
 - **Smart Intervals**: Dynamic timing based on UK business hours and session patterns
   - Peak hours (2-4 PM weekdays): 5-minute checks for faster session detection
   - Business hours (9 AM-6 PM weekdays): 10-minute intervals
-  - Off-peak (evenings/weekends): 30-minute intervals  
+  - Off-peak (evenings/weekends): 30-minute intervals
   - Event-driven: Increased frequency after finding new sessions
 - **Smart Filtering**: Only joins sessions meeting your points threshold
 - **Intelligent Caching**: Optimized API usage based on real-world update patterns
+  - Smart meter devices: 7-day cache (rarely changes)
+  - Usage measurements: 30-minute cache (updated regularly)
+  - Wheel spins: 12-hour cache (daily refresh)
+  - Account info: 1-hour cache (balance updates)
 - **State Persistence**: Session tracking stored in `~/.config/octojoin/`
 - **Free Electricity Alerts**: Smart alerting at key intervals to avoid spam
+- **Automatic Wheel Spinning**: Detects and spins all available wheels, collecting OctoPoints automatically
+- **Usage Visualization**: Interactive charts with selectable time periods (1 day to 30 days)
 
 ## Support the Project
 
