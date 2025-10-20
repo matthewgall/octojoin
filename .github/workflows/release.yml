@@ -97,7 +97,7 @@ jobs:
         echo "All binaries include SHA256 checksums for verification." >> release_notes.md
     
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: |
           dist/*
