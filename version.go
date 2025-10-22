@@ -68,8 +68,14 @@ type GitHubRelease struct {
 func CheckForUpdates() (string, string, bool) {
 	currentVersion := GetVersion()
 
-	// Skip update check for dev builds
-	if currentVersion == "dev" || !strings.HasPrefix(currentVersion, "v") {
+	// Skip update check for dev builds, commit hashes, or non-tagged versions
+	// Only check for proper semver releases (e.g., v1.2.3)
+	if currentVersion == "dev" || !strings.HasPrefix(currentVersion, "v") || len(currentVersion) < 5 {
+		return "", "", false
+	}
+
+	// Skip if version looks like a commit hash (7+ hex characters without dots)
+	if len(currentVersion) <= 7 && !strings.Contains(currentVersion, ".") {
 		return "", "", false
 	}
 
