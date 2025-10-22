@@ -480,9 +480,30 @@ type GraphQLRequest struct {
 }
 
 func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSessionsResponse, error) {
-	// Check cache if state is provided - saving sessions announced day before
+	// Dynamic cache duration based on UK business hours for faster session detection
+	cacheDuration := 2 * time.Hour // Default: off-peak
+
+	// Load UK timezone for smart caching
+	ukLocation, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		ukLocation = time.UTC
+	}
+
+	now := time.Now().In(ukLocation)
+	hour := now.Hour()
+	weekday := now.Weekday()
+
+	// Peak announcement window (2-4 PM UK time, weekdays) - use 10 minute cache
+	if hour >= 14 && hour < 16 && weekday >= time.Monday && weekday <= time.Friday {
+		cacheDuration = 10 * time.Minute
+	} else if hour >= 9 && hour < 18 && weekday >= time.Monday && weekday <= time.Friday {
+		// Business hours - 30 minute cache
+		cacheDuration = 30 * time.Minute
+	}
+
+	// Check cache if state is provided
 	if state != nil && state.CachedSavingSessions != nil {
-		if state.IsCacheValid(state.CachedSavingSessions.Timestamp, 2*time.Hour) {
+		if state.IsCacheValid(state.CachedSavingSessions.Timestamp, cacheDuration) {
 			return state.CachedSavingSessions.Data, nil
 		}
 	}
