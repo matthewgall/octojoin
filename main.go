@@ -236,10 +236,13 @@ func main() {
 		return
 	}
 	
+	// Check for updates in background (non-blocking)
+	go PrintUpdateNotification()
+
 	// Initialize monitor
 	monitor := NewSavingSessionMonitor(client, accountID)
 	monitor.SetMinPointsThreshold(minPoints)
-	
+
 	// Configure smart intervals (command line flag takes precedence over config)
 	disableSmartIntervals := noSmartIntervals || config.NoSmartIntervals
 	monitor.SetSmartIntervals(!disableSmartIntervals)

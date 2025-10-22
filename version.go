@@ -15,8 +15,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"runtime/debug"
+	"strings"
+	"time"
 )
 
 // These variables are set at build time via -ldflags
@@ -51,4 +55,72 @@ func GetVersion() string {
 // GetUserAgent returns the properly formatted user-agent string
 func GetUserAgent() string {
 	return fmt.Sprintf("matthewgall/octojoin %s", GetVersion())
+}
+
+// GitHubRelease represents a GitHub release
+type GitHubRelease struct {
+	TagName string `json:"tag_name"`
+	Name    string `json:"name"`
+	HTMLURL string `json:"html_url"`
+}
+
+// CheckForUpdates checks if a newer version is available on GitHub
+func CheckForUpdates() (string, string, bool) {
+	currentVersion := GetVersion()
+
+	// Skip update check for dev builds
+	if currentVersion == "dev" || !strings.HasPrefix(currentVersion, "v") {
+		return "", "", false
+	}
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/matthewgall/octojoin/releases/latest", nil)
+	if err != nil {
+		return "", "", false
+	}
+
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", GetUserAgent())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", false
+	}
+
+	var release GitHubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", "", false
+	}
+
+	// Compare versions (simple string comparison works for semantic versioning)
+	if release.TagName > currentVersion {
+		return release.TagName, release.HTMLURL, true
+	}
+
+	return "", "", false
+}
+
+// PrintUpdateNotification prints an update notification if available
+func PrintUpdateNotification() {
+	newVersion, url, available := CheckForUpdates()
+	if available {
+		fmt.Println()
+		fmt.Println("╔════════════════════════════════════════════════════════════════╗")
+		fmt.Printf("║  🎉 Update Available: %s → %s%s║\n",
+			GetVersion(),
+			newVersion,
+			strings.Repeat(" ", 30-len(GetVersion())-len(newVersion)))
+		fmt.Println("║                                                                ║")
+		fmt.Printf("║  Download: %-51s ║\n", url)
+		fmt.Println("╔════════════════════════════════════════════════════════════════╗")
+		fmt.Println()
+	}
 }
