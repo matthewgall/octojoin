@@ -804,9 +804,9 @@ func (c *OctopusClient) GetFreeElectricitySessions() (*FreeElectricitySessionsRe
 }
 
 func (c *OctopusClient) GetFreeElectricitySessionsWithCache(state *AppState) (*FreeElectricitySessionsResponse, error) {
-	// Check cache if state is provided - free electricity announced day before
+	// Check cache if state is provided - static file with no rate limits, check frequently
 	if state != nil && state.CachedFreeElectricity != nil {
-		if state.IsCacheValid(state.CachedFreeElectricity.Timestamp, 4*time.Hour) {
+		if state.IsCacheValid(state.CachedFreeElectricity.Timestamp, 5*time.Minute) {
 			return state.CachedFreeElectricity.Data, nil
 		}
 	}
