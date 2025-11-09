@@ -87,6 +87,19 @@ func main() {
 		webPort = config.WebPort
 	}
 
+	// Update config with final values for validation
+	config.AccountID = accountID
+	config.APIKey = apiKey
+	config.Daemon = daemon
+	config.WebUI = webUI
+	config.WebPort = webPort
+	config.MinPoints = minPoints
+
+	// Validate configuration
+	if err := config.Validate(); err != nil {
+		log.Fatal(err)
+	}
+
 	if accountID == "" || apiKey == "" {
 		fmt.Fprintf(os.Stderr, "Usage: %s -account=<account_id> -key=<api_key>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Or set environment variables: OCTOPUS_ACCOUNT_ID and OCTOPUS_API_KEY\n")
