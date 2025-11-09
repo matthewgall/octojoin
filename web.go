@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -71,8 +72,39 @@ func NewWebServer(monitor *SavingSessionMonitor, port int) *WebServer {
 }
 
 func (ws *WebServer) Start() error {
+	// Legacy method for backward compatibility
+	return ws.StartWithContext(context.Background())
+}
+
+func (ws *WebServer) StartWithContext(ctx context.Context) error {
 	log.Printf("Starting web server on %s", ws.server.Addr)
-	return ws.server.ListenAndServe()
+
+	// Start server in goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		if err := ws.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+
+	// Wait for context cancellation or server error
+	select {
+	case <-ctx.Done():
+		log.Println("Shutting down web server...")
+		// Give server 5 seconds to finish existing requests
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return ws.server.Shutdown(shutdownCtx)
+	case err := <-errCh:
+		return err
+	}
+}
+
+func (ws *WebServer) Stop() error {
+	log.Println("Stopping web server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return ws.server.Shutdown(ctx)
 }
 
 func getCacheAge(cached *CachedUsageMeasurements) int {

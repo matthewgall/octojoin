@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -134,41 +135,55 @@ func (m *SavingSessionMonitor) EnableWebUI(port int) {
 }
 
 func (m *SavingSessionMonitor) Start() {
+	// Legacy method for backward compatibility
+	ctx := context.Background()
+	_ = m.StartWithContext(ctx)
+}
+
+func (m *SavingSessionMonitor) StartWithContext(ctx context.Context) error {
 	log.Println("Starting saving session monitoring...")
 	if m.useSmartIntervals {
 		log.Println("Smart interval adjustment enabled")
 	}
-	
+
 	// Start web server if enabled
 	if m.webServer != nil {
 		go func() {
-			if err := m.webServer.Start(); err != nil {
+			if err := m.webServer.StartWithContext(ctx); err != nil && err != context.Canceled {
 				log.Printf("Web server error: %v", err)
 			}
 		}()
 	}
-	
+
 	// Initial check
 	m.checkForNewSessions()
-	
+
 	// Dynamic interval monitoring
 	for {
 		interval := m.getSmartInterval()
 		timer := time.NewTimer(interval)
-		
+
 		if m.useSmartIntervals {
 			log.Printf("Next check in %s", m.formatDuration(interval))
 		}
-		
+
 		select {
 		case <-timer.C:
 			m.checkForNewSessions()
 		case <-m.stopCh:
 			timer.Stop()
 			log.Println("Stopping saving session monitoring...")
-			return
+			return nil
+		case <-ctx.Done():
+			timer.Stop()
+			log.Println("Stopping saving session monitoring (context canceled)...")
+			// Stop web server gracefully
+			if m.webServer != nil {
+				m.webServer.Stop()
+			}
+			return ctx.Err()
 		}
-		
+
 		timer.Stop()
 	}
 }

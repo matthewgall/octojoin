@@ -15,10 +15,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -267,9 +270,34 @@ func main() {
 		log.Printf("No minimum points threshold - will join all sessions")
 	}
 	
+	// Set up signal handling for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle SIGINT (Ctrl+C) and SIGTERM (systemd stop)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
 	if daemon {
 		log.Printf("Running in daemon mode - continuous monitoring")
-		monitor.Start()
+
+		// Start monitor in goroutine
+		go func() {
+			if err := monitor.StartWithContext(ctx); err != nil && err != context.Canceled {
+				log.Printf("Monitor error: %v", err)
+			}
+		}()
+
+		// Wait for shutdown signal
+		sig := <-sigCh
+		log.Printf("Received signal %v, initiating graceful shutdown...", sig)
+
+		// Cancel context to stop monitor
+		cancel()
+
+		// Give monitor time to finish current operations
+		time.Sleep(2 * time.Second)
+		log.Println("Shutdown complete")
 	} else {
 		log.Printf("Running in one-shot mode")
 		monitor.CheckOnce()
