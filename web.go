@@ -186,11 +186,11 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 func (ws *WebServer) handleUsageAPI(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
 	daysParam := r.URL.Query().Get("days")
-	days := 7 // default to 7 days
+	days := WebDefaultUsageDays // default
 	if daysParam != "" {
 		if d, err := fmt.Sscanf(daysParam, "%d", &days); err == nil && d > 0 {
-			if days > 30 {
-				days = 30 // max 30 days
+			if days > WebMaxUsageDays {
+				days = WebMaxUsageDays // max days
 			}
 		}
 	}
@@ -242,14 +242,14 @@ func (ws *WebServer) handleUsageRefreshAPI(w http.ResponseWriter, r *http.Reques
 		ws.monitor.state.CachedUsageMeasurements = nil
 		log.Println("Cleared usage measurements cache")
 	}
-	
+
 	// Parse query parameters
 	daysParam := r.URL.Query().Get("days")
-	days := 7 // default to 7 days
+	days := WebDefaultUsageDays // default
 	if daysParam != "" {
 		if d, err := fmt.Sscanf(daysParam, "%d", &days); err == nil && d > 0 {
-			if days > 30 {
-				days = 30 // max 30 days
+			if days > WebMaxUsageDays {
+				days = WebMaxUsageDays // max days
 			}
 		}
 	}

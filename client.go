@@ -185,11 +185,11 @@ func NewOctopusClient(accountID, apiKey string, debug bool) *OctopusClient {
 		AccountID:   accountID,
 		APIKey:      apiKey,
 		BaseURL:     getEndpoint("api"),
-		minInterval: 1 * time.Second,
-		maxRetries:  3,
+		minInterval: HTTPMinInterval,
+		maxRetries:  HTTPMaxRetries,
 		debug:       debug,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: HTTPClientTimeout,
 		},
 	}
 }
@@ -280,11 +280,11 @@ func (c *OctopusClient) makeGraphQLRequestWithEndpoint(endpoint, query string, v
 
 		// Check if the response contains JWT expiration error
 		bodyStr := string(bodyBytes)
-		if strings.Contains(bodyStr, "Signature of the JWT has expired") || 
+		if strings.Contains(bodyStr, "Signature of the JWT has expired") ||
 		   strings.Contains(bodyStr, "JWT has expired") ||
 		   strings.Contains(bodyStr, "Token has expired") ||
-		   strings.Contains(bodyStr, "KT-CT-1139") || // Octopus specific auth error code
-		   strings.Contains(bodyStr, "KT-CT-1143") || // Invalid authorization header error
+		   strings.Contains(bodyStr, OctopusErrorCodeJWTExpired) || // Octopus specific auth error code
+		   strings.Contains(bodyStr, OctopusErrorCodeInvalidAuth) || // Invalid authorization header error
 		   strings.Contains(bodyStr, "Authentication failed") {
 			c.debugLog("GraphQL response contains JWT expiration/auth error. Invalidating token and retrying...")
 			c.debugLog("Error details: %s", bodyStr)
@@ -399,7 +399,7 @@ func (c *OctopusClient) GetSavingSessions() (*SavingSessionsResponse, error) {
 func (c *OctopusClient) getCampaignStatusWithCache(state *AppState) (map[string]bool, error) {
 	// Check cache if state is provided - campaign status rarely changes
 	if state != nil && state.CachedCampaignStatus != nil {
-		if state.IsCacheValid(state.CachedCampaignStatus.Timestamp, 24*time.Hour) {
+		if state.IsCacheValid(state.CachedCampaignStatus.Timestamp, CacheDurationCampaignStatus) {
 			return state.CachedCampaignStatus.Data, nil
 		}
 	}
@@ -481,7 +481,7 @@ type GraphQLRequest struct {
 
 func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSessionsResponse, error) {
 	// Dynamic cache duration based on UK business hours for faster session detection
-	cacheDuration := 2 * time.Hour // Default: off-peak
+	cacheDuration := CacheDurationSavingSessionsOffPeak // Default: off-peak
 
 	// Load UK timezone for smart caching
 	ukLocation, err := time.LoadLocation("Europe/London")
@@ -494,11 +494,11 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 	weekday := now.Weekday()
 
 	// Peak announcement window (2-4 PM UK time, weekdays) - use 10 minute cache
-	if hour >= 14 && hour < 16 && weekday >= time.Monday && weekday <= time.Friday {
-		cacheDuration = 10 * time.Minute
-	} else if hour >= 9 && hour < 18 && weekday >= time.Monday && weekday <= time.Friday {
+	if hour >= UKPeakAnnouncementStartHour && hour < UKPeakAnnouncementEndHour && weekday >= time.Monday && weekday <= time.Friday {
+		cacheDuration = CacheDurationSavingSessionsPeak
+	} else if hour >= UKBusinessHoursStartHour && hour < UKBusinessHoursEndHour && weekday >= time.Monday && weekday <= time.Friday {
 		// Business hours - 30 minute cache
-		cacheDuration = 30 * time.Minute
+		cacheDuration = CacheDurationSavingSessionsBusiness
 	}
 
 	// Check cache if state is provided
@@ -610,8 +610,8 @@ func (c *OctopusClient) getSavingSessionsREST() (*SavingSessionsResponse, error)
 }
 
 func (c *OctopusClient) refreshJWTToken() error {
-	// Check if token is still valid (with 5 minute buffer, matching Home Assistant approach)
-	if !c.jwtExpiry.IsZero() && time.Until(c.jwtExpiry) > 5*time.Minute {
+	// Check if token is still valid (with buffer before expiry)
+	if !c.jwtExpiry.IsZero() && time.Until(c.jwtExpiry) > JWTRefreshBuffer {
 		c.debugLog("JWT token still valid until %v", c.jwtExpiry)
 		return nil // Token still valid
 	}
@@ -709,7 +709,7 @@ func (c *OctopusClient) refreshJWTToken() error {
 func (c *OctopusClient) getOctoPointsGraphQLWithCache(state *AppState) (int, error) {
 	// Check cache if state is provided - OctoPoints change at most hourly
 	if state != nil && state.CachedOctoPoints != nil {
-		if state.IsCacheValid(state.CachedOctoPoints.Timestamp, 1*time.Hour) {
+		if state.IsCacheValid(state.CachedOctoPoints.Timestamp, CacheDurationOctoPoints) {
 			return state.CachedOctoPoints.Data, nil
 		}
 	}
@@ -827,7 +827,7 @@ func (c *OctopusClient) GetFreeElectricitySessions() (*FreeElectricitySessionsRe
 func (c *OctopusClient) GetFreeElectricitySessionsWithCache(state *AppState) (*FreeElectricitySessionsResponse, error) {
 	// Check cache if state is provided - static file with no rate limits, check frequently
 	if state != nil && state.CachedFreeElectricity != nil {
-		if state.IsCacheValid(state.CachedFreeElectricity.Timestamp, 5*time.Minute) {
+		if state.IsCacheValid(state.CachedFreeElectricity.Timestamp, CacheDurationFreeElectricity) {
 			return state.CachedFreeElectricity.Data, nil
 		}
 	}
@@ -904,7 +904,7 @@ func (c *OctopusClient) JoinSavingSession(eventID int) error {
 func (c *OctopusClient) getWheelOfFortuneSpinsWithCache(state *AppState) (*WheelOfFortuneSpins, error) {
 	// Check cache if state is provided - Wheel of Fortune spins update once daily
 	if state != nil && state.CachedWheelOfFortuneSpins != nil {
-		if state.IsCacheValid(state.CachedWheelOfFortuneSpins.Timestamp, 12*time.Hour) {
+		if state.IsCacheValid(state.CachedWheelOfFortuneSpins.Timestamp, CacheDurationWheelSpins) {
 			return state.CachedWheelOfFortuneSpins.Data, nil
 		}
 	}
@@ -1071,7 +1071,7 @@ func (c *OctopusClient) spinAllAvailableWheels(spins *WheelOfFortuneSpins) ([]Wh
 		results = append(results, *result)
 		log.Printf("🎰 Electricity wheel %d: Won %d OctoPoints", i+1, result.Prize)
 		// Small delay between spins to be respectful to the API
-		time.Sleep(1 * time.Second)
+		time.Sleep(WheelSpinDelay)
 	}
 	
 	// Spin gas wheels
@@ -1085,7 +1085,7 @@ func (c *OctopusClient) spinAllAvailableWheels(spins *WheelOfFortuneSpins) ([]Wh
 		results = append(results, *result)
 		log.Printf("🎰 Gas wheel %d: Won %d OctoPoints", i+1, result.Prize)
 		// Small delay between spins to be respectful to the API
-		time.Sleep(1 * time.Second)
+		time.Sleep(WheelSpinDelay)
 	}
 	
 	c.debugLog("Finished spinning wheels. Total results: %d", len(results))
@@ -1100,7 +1100,7 @@ type AccountInfo struct {
 func (c *OctopusClient) getAccountInfoWithCache(state *AppState) (*AccountInfo, error) {
 	// Check cache if state is provided - account balance changes at most hourly, often less
 	if state != nil && state.CachedAccountInfo != nil {
-		if state.IsCacheValid(state.CachedAccountInfo.Timestamp, 1*time.Hour) {
+		if state.IsCacheValid(state.CachedAccountInfo.Timestamp, CacheDurationAccountInfo) {
 			return state.CachedAccountInfo.Data, nil
 		}
 	}
@@ -1389,10 +1389,10 @@ func (m *UsageMeasurement) GetValueAsFloat64() float64 {
 	return 0.0
 }
 
-// getSmartMeterDevicesWithCache retrieves ESME device IDs with caching (7 days)
+// getSmartMeterDevicesWithCache retrieves ESME device IDs with caching
 func (c *OctopusClient) getSmartMeterDevicesWithCache(state *AppState) ([]string, error) {
 	if state != nil && state.CachedMeterDevices != nil {
-		if state.IsCacheValid(state.CachedMeterDevices.Timestamp, 7*24*time.Hour) {
+		if state.IsCacheValid(state.CachedMeterDevices.Timestamp, CacheDurationMeterDevices) {
 			return state.CachedMeterDevices.Data, nil
 		}
 	}
@@ -1414,11 +1414,11 @@ func (c *OctopusClient) getSmartMeterDevicesWithCache(state *AppState) ([]string
 	return devices, nil
 }
 
-// getUsageMeasurementsWithCache retrieves usage measurements with caching (30 minutes)
+// getUsageMeasurementsWithCache retrieves usage measurements with caching
 func (c *OctopusClient) getUsageMeasurementsWithCache(state *AppState, days int) ([]UsageMeasurement, error) {
 	if state != nil && state.CachedUsageMeasurements != nil {
-		// Cache is valid if it's less than 30 minutes old and covers the same or more days
-		if state.IsCacheValid(state.CachedUsageMeasurements.Timestamp, 30*time.Minute) && 
+		// Cache is valid if it's less than duration old and covers the same or more days
+		if state.IsCacheValid(state.CachedUsageMeasurements.Timestamp, CacheDurationUsageMeasurements) && 
 		   state.CachedUsageMeasurements.Days >= days {
 			c.debugLog("Using cached usage measurements (%d measurements, %d days, age: %v)", 
 				len(state.CachedUsageMeasurements.Data), state.CachedUsageMeasurements.Days, 

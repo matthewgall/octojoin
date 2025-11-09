@@ -162,9 +162,8 @@ func (s *AppState) IsCacheValid(cacheTime time.Time, maxAge time.Duration) bool 
 func (s *AppState) CleanupExpiredSessions() {
 	// Clean up alert states for sessions that have ended
 	for code := range s.AlertStates {
-		// We need to check against actual session data, but for now
-		// we'll clean up very old alert states (older than 7 days)
-		if time.Since(s.LastUpdated) > 7*24*time.Hour {
+		// Clean up very old alert states
+		if time.Since(s.LastUpdated) > StateCleanupAge {
 			delete(s.AlertStates, code)
 		}
 	}

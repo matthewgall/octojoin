@@ -63,7 +63,7 @@ func NewSavingSessionMonitor(client *OctopusClient, accountID string) *SavingSes
 		client:             client,
 		state:              state,
 		accountID:          accountID,
-		checkInterval:      15 * time.Minute,
+		checkInterval:      MonitorDefaultCheckInterval,
 		stopCh:             make(chan struct{}),
 		minPointsThreshold: 0,
 		useSmartIntervals:  true,
@@ -98,34 +98,35 @@ func (m *SavingSessionMonitor) getSmartInterval() time.Duration {
 	now := time.Now().In(ukLocation)
 	hour := now.Hour()
 	weekday := now.Weekday()
-	
+
 	// Recently found new sessions - check more frequently for a batch
-	if !m.lastNewSessionTime.IsZero() && time.Since(m.lastNewSessionTime) < 30*time.Minute {
-		return 5 * time.Minute
+	if !m.lastNewSessionTime.IsZero() && time.Since(m.lastNewSessionTime) < IntervalAfterNewSession {
+		return IntervalPeakAnnouncement
 	}
-	
+
 	// Peak announcement window (2-4 PM UK time, weekdays)
-	if hour >= 14 && hour < 16 && weekday >= time.Monday && weekday <= time.Friday {
-		return 5 * time.Minute
+	if hour >= UKPeakAnnouncementStartHour && hour < UKPeakAnnouncementEndHour && weekday >= time.Monday && weekday <= time.Friday {
+		return IntervalPeakAnnouncement
 	}
-	
+
 	// Business hours (9 AM - 6 PM, weekdays)
-	if hour >= 9 && hour < 18 && weekday >= time.Monday && weekday <= time.Friday {
-		return 10 * time.Minute
+	if hour >= UKBusinessHoursStartHour && hour < UKBusinessHoursEndHour && weekday >= time.Monday && weekday <= time.Friday {
+		return IntervalBusinessHours
 	}
-	
+
 	// Event-driven backoff based on consecutive empty checks
 	if m.consecutiveEmptyChecks > 0 {
-		// Gradually increase: 15min → 20min → 25min → 30min (max)
-		backoffMinutes := 15 + (5 * m.consecutiveEmptyChecks)
-		if backoffMinutes > 30 {
-			backoffMinutes = 30
+		// Gradually increase intervals after consecutive empty checks (up to off-peak max)
+		backoffMinutes := int(IntervalEventDrivenBase.Minutes()) + (int(IntervalEventDrivenIncrement.Minutes()) * m.consecutiveEmptyChecks)
+		maxMinutes := int(IntervalOffPeak.Minutes())
+		if backoffMinutes > maxMinutes {
+			backoffMinutes = maxMinutes
 		}
 		return time.Duration(backoffMinutes) * time.Minute
 	}
-	
+
 	// Off-peak hours (evenings, nights, weekends)
-	return 30 * time.Minute
+	return IntervalOffPeak
 }
 
 func (m *SavingSessionMonitor) EnableWebUI(port int) {
@@ -287,7 +288,7 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 				log.Printf("   Duration: %s", m.formatDuration(duration))
 				log.Printf("   Reward: %d points", session.OctoPoints)
 				
-				if timeUntil < 24*time.Hour {
+				if timeUntil < DisplayThreshold24Hours {
 					log.Printf("   Starts in %s", m.formatTimeUntil(timeUntil))
 				} else {
 					log.Printf("   Starts %s", m.formatDaysUntil(timeUntil))
@@ -376,7 +377,7 @@ func (m *SavingSessionMonitor) checkFreeElectricitySessions() bool {
 				session.StartAt.Format("Monday, Jan 2"), 
 				session.StartAt.Format("15:04"))
 			log.Printf("   Duration: %s", m.formatDuration(duration))
-			if timeUntil < 24*time.Hour {
+			if timeUntil < DisplayThreshold24Hours {
 				log.Printf("   Starts in %s", m.formatTimeUntil(timeUntil))
 			} else {
 				log.Printf("   Starts %s", m.formatDaysUntil(timeUntil))
@@ -521,16 +522,16 @@ func (m *SavingSessionMonitor) shouldAlert(session FreeElectricitySession, timeU
 	}
 	
 	// Upcoming session - check intervals
-	if timeUntil <= 15*time.Minute && !alert.FinalAlert {
+	if timeUntil <= AlertIntervalFinal && !alert.FinalAlert {
 		alert.FinalAlert = true
 		return true, "STARTING SOON"
-	} else if timeUntil <= 6*time.Hour && !alert.SixHourAlert {
+	} else if timeUntil <= AlertIntervalSixHour && !alert.SixHourAlert {
 		alert.SixHourAlert = true
 		return true, "6-HOUR REMINDER"
-	} else if timeUntil <= 12*time.Hour && !alert.TwelveHourAlert {
+	} else if timeUntil <= AlertIntervalTwelveHour && !alert.TwelveHourAlert {
 		alert.TwelveHourAlert = true
 		return true, "12-HOUR REMINDER"
-	} else if timeUntil <= 24*time.Hour && !alert.DayOfAlert {
+	} else if timeUntil <= AlertIntervalDayOf && !alert.DayOfAlert {
 		alert.DayOfAlert = true
 		return true, "DAY-OF REMINDER"
 	} else if !alert.InitialAlert {
