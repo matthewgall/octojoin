@@ -108,9 +108,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Printf("Starting Octopus Energy Saving Session Monitor")
-	log.Printf("Account ID: %s", accountID)
-	log.Printf("API Key: %s...", apiKey[:8]) // Only show first 8 chars for security
+	// Initialize logger for main application
+	logger := NewLogger(debug).WithComponent("main")
+
+	logger.Info("Starting Octopus Energy Saving Session Monitor",
+		"version", GetVersion(),
+	)
+	logger.Debug("Configuration",
+		"account_id_prefix", accountID[:min(5, len(accountID))],
+		"daemon_mode", daemon,
+		"web_ui", webUI,
+		"min_points", minPoints,
+	)
 
 	// Initialize API client
 	client := NewOctopusClient(accountID, apiKey, debug)
@@ -266,21 +275,21 @@ func main() {
 	// Set custom check interval if specified in config
 	if config.CheckInterval > 0 && config.CheckInterval != 10 {
 		monitor.SetCheckInterval(time.Duration(config.CheckInterval) * time.Minute)
-		log.Printf("Using custom check interval: %d minutes", config.CheckInterval)
+		logger.Info("Using custom check interval", "interval_minutes", config.CheckInterval)
 	}
-	
+
 	// Enable web UI if requested and in daemon mode
 	if webUI && daemon {
 		monitor.EnableWebUI(webPort)
-		log.Printf("Web UI enabled at http://localhost:%d", webPort)
+		logger.Info("Web UI enabled", "url", fmt.Sprintf("http://localhost:%d", webPort))
 	} else if webUI && !daemon {
-		log.Printf("Warning: Web UI can only be enabled in daemon mode")
+		logger.Warn("Web UI can only be enabled in daemon mode")
 	}
-	
+
 	if minPoints > 0 {
-		log.Printf("Minimum points threshold: %d", minPoints)
+		logger.Info("Minimum points threshold set", "min_points", minPoints)
 	} else {
-		log.Printf("No minimum points threshold - will join all sessions")
+		logger.Info("No minimum points threshold - will join all sessions")
 	}
 	
 	// Set up signal handling for graceful shutdown
@@ -292,27 +301,27 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	if daemon {
-		log.Printf("Running in daemon mode - continuous monitoring")
+		logger.Info("Running in daemon mode - continuous monitoring")
 
 		// Start monitor in goroutine
 		go func() {
 			if err := monitor.StartWithContext(ctx); err != nil && err != context.Canceled {
-				log.Printf("Monitor error: %v", err)
+				logger.Error("Monitor error", "error", err.Error())
 			}
 		}()
 
 		// Wait for shutdown signal
 		sig := <-sigCh
-		log.Printf("Received signal %v, initiating graceful shutdown...", sig)
+		logger.Info("Received signal, initiating graceful shutdown", "signal", sig.String())
 
 		// Cancel context to stop monitor
 		cancel()
 
 		// Give monitor time to finish current operations
 		time.Sleep(2 * time.Second)
-		log.Println("Shutdown complete")
+		logger.Info("Shutdown complete")
 	} else {
-		log.Printf("Running in one-shot mode")
+		logger.Info("Running in one-shot mode")
 		monitor.CheckOnce()
 	}
 }
