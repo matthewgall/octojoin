@@ -21,6 +21,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 // These variables are set at build time via -ldflags
@@ -106,8 +108,9 @@ func CheckForUpdates() (string, string, bool) {
 		return "", "", false
 	}
 
-	// Compare versions (simple string comparison works for semantic versioning)
-	if release.TagName > currentVersion {
+	// Compare versions using semver.Compare
+	// semver.Compare returns 1 if release.TagName > currentVersion
+	if semver.Compare(release.TagName, currentVersion) > 0 {
 		return release.TagName, release.HTMLURL, true
 	}
 
