@@ -126,50 +126,50 @@ func main() {
 	
 	// Handle compatibility testing flag
 	if runTest {
-		log.Println("🔍 Running OctoJoin Compatibility Test...")
-		log.Println("===========================================")
+		fmt.Println("🔍 Running OctoJoin Compatibility Test...")
+		fmt.Println("===========================================")
 		
 		// Initialize state for caching
 		monitor := NewSavingSessionMonitor(client, accountID)
 		testPassed := true
 		
 		// Test 1: Basic API connectivity and account info
-		log.Println("\n1️⃣  Testing API connectivity and account access...")
+		fmt.Println("\n1️⃣  Testing API connectivity and account access...")
 		accountInfo, err := client.getAccountInfo()
 		if err != nil {
-			log.Printf("❌ Failed to access account information: %v", err)
+			fmt.Printf("❌ Failed to access account information: %v", err)
 			testPassed = false
 		} else {
-			log.Printf("✅ Account access successful")
-			log.Printf("   Balance: £%.2f", accountInfo.Balance)
-			log.Printf("   Account Type: %s", accountInfo.AccountType)
+			fmt.Printf("✅ Account access successful")
+			fmt.Printf("   Balance: £%.2f", accountInfo.Balance)
+			fmt.Printf("   Account Type: %s", accountInfo.AccountType)
 		}
 		
 		// Test 2: Saving Sessions API
-		log.Println("\n2️⃣  Testing Saving Sessions API...")
+		fmt.Println("\n2️⃣  Testing Saving Sessions API...")
 		sessions, err := client.GetSavingSessions()
 		if err != nil {
-			log.Printf("❌ Failed to access Saving Sessions: %v", err)
+			fmt.Printf("❌ Failed to access Saving Sessions: %v", err)
 			testPassed = false
 		} else {
-			log.Printf("✅ Saving Sessions API accessible")
-			log.Printf("   Current OctoPoints: %d", sessions.Data.OctoPoints.Account.CurrentPointsInWallet)
-			log.Printf("   Joined sessions: %d", len(sessions.Data.SavingSessions.Account.JoinedEvents))
-			log.Printf("   Campaign enrolled: %t", sessions.Data.SavingSessions.Account.HasJoinedCampaign)
+			fmt.Printf("✅ Saving Sessions API accessible")
+			fmt.Printf("   Current OctoPoints: %d", sessions.Data.OctoPoints.Account.CurrentPointsInWallet)
+			fmt.Printf("   Joined sessions: %d", len(sessions.Data.SavingSessions.Account.JoinedEvents))
+			fmt.Printf("   Campaign enrolled: %t", sessions.Data.SavingSessions.Account.HasJoinedCampaign)
 			
 			if !sessions.Data.SavingSessions.Account.HasJoinedCampaign {
-				log.Printf("⚠️  Warning: Not enrolled in Saving Sessions campaign")
+				fmt.Printf("⚠️  Warning: Not enrolled in Saving Sessions campaign")
 			}
 		}
 		
 		// Test 3: Campaign status
-		log.Println("\n3️⃣  Testing campaign enrollment status...")
+		fmt.Println("\n3️⃣  Testing campaign enrollment status...")
 		campaigns, err := client.getCampaignStatus()
 		if err != nil {
-			log.Printf("❌ Failed to check campaign status: %v", err)
+			fmt.Printf("❌ Failed to check campaign status: %v", err)
 			testPassed = false
 		} else {
-			log.Printf("✅ Campaign status accessible")
+			fmt.Printf("✅ Campaign status accessible")
 			enrolledCount := 0
 			for campaign, enrolled := range campaigns {
 				status := "❌ Not enrolled"
@@ -177,86 +177,86 @@ func main() {
 					status = "✅ Enrolled"
 					enrolledCount++
 				}
-				log.Printf("   %s: %s", campaign, status)
+				fmt.Printf("   %s: %s", campaign, status)
 			}
 			
 			if enrolledCount == 0 {
-				log.Printf("⚠️  Warning: Not enrolled in any campaigns")
+				fmt.Printf("⚠️  Warning: Not enrolled in any campaigns")
 			}
 		}
 		
 		// Test 4: Free Electricity Sessions
-		log.Println("\n4️⃣  Testing Free Electricity Sessions...")
+		fmt.Println("\n4️⃣  Testing Free Electricity Sessions...")
 		freeElectricity, err := client.GetFreeElectricitySessions()
 		if err != nil {
-			log.Printf("❌ Failed to access Free Electricity Sessions: %v", err)
+			fmt.Printf("❌ Failed to access Free Electricity Sessions: %v", err)
 			testPassed = false
 		} else {
-			log.Printf("✅ Free Electricity Sessions API accessible")
-			log.Printf("   Available sessions: %d", len(freeElectricity.Data))
+			fmt.Printf("✅ Free Electricity Sessions API accessible")
+			fmt.Printf("   Available sessions: %d", len(freeElectricity.Data))
 		}
 		
 		// Test 5: Smart meter device discovery
-		log.Println("\n5️⃣  Testing smart meter device discovery...")
+		fmt.Println("\n5️⃣  Testing smart meter device discovery...")
 		devices, err := client.getSmartMeterDevicesWithCache(monitor.state)
 		if err != nil {
-			log.Printf("❌ Failed to discover smart meter devices: %v", err)
+			fmt.Printf("❌ Failed to discover smart meter devices: %v", err)
 			testPassed = false
 		} else {
-			log.Printf("✅ Found %d ESME (smart meter) devices:", len(devices))
+			fmt.Printf("✅ Found %d ESME (smart meter) devices:", len(devices))
 			for i, device := range devices {
-				log.Printf("   %d. %s", i+1, device)
+				fmt.Printf("   %d. %s", i+1, device)
 			}
 			
 			if len(devices) == 0 {
-				log.Printf("⚠️  Warning: No smart meter devices found - usage graphs will not work")
+				fmt.Printf("⚠️  Warning: No smart meter devices found - usage graphs will not work")
 			}
 		}
 		
 		// Test 6: Usage measurements (if smart meter available)
 		if len(devices) > 0 {
-			log.Println("\n6️⃣  Testing smart meter data retrieval...")
+			fmt.Println("\n6️⃣  Testing smart meter data retrieval...")
 			measurements, err := client.getUsageMeasurementsWithCache(monitor.state, 7)
 			if err != nil {
-				log.Printf("❌ Failed to retrieve usage measurements: %v", err)
+				fmt.Printf("❌ Failed to retrieve usage measurements: %v", err)
 				testPassed = false
 			} else {
-				log.Printf("✅ Retrieved %d usage measurements for last 7 days", len(measurements))
+				fmt.Printf("✅ Retrieved %d usage measurements for last 7 days", len(measurements))
 				if len(measurements) > 0 {
-					log.Printf("   Sample measurements:")
+					fmt.Printf("   Sample measurements:")
 					for i, m := range measurements[:min(3, len(measurements))] {
-						log.Printf("     %d. %s: %.3f %s", 
+						fmt.Printf("     %d. %s: %.3f %s", 
 							i+1, m.StartAt.Format("2006-01-02 15:04"), 
 							m.GetValueAsFloat64(), m.Unit)
 					}
 				} else {
-					log.Printf("⚠️  Warning: No usage data available - usage graphs will be empty")
+					fmt.Printf("⚠️  Warning: No usage data available - usage graphs will be empty")
 				}
 			}
 		}
 		
 		// Test 7: Wheel of Fortune spins
-		log.Println("\n7️⃣  Testing Wheel of Fortune...")
+		fmt.Println("\n7️⃣  Testing Wheel of Fortune...")
 		spins, err := client.getWheelOfFortuneSpins()
 		if err != nil {
-			log.Printf("❌ Failed to check Wheel of Fortune spins: %v", err)
+			fmt.Printf("❌ Failed to check Wheel of Fortune spins: %v", err)
 			testPassed = false
 		} else {
-			log.Printf("✅ Wheel of Fortune accessible")
-			log.Printf("   Electricity spins: %d", spins.ElectricitySpins)
-			log.Printf("   Gas spins: %d", spins.GasSpins)
+			fmt.Printf("✅ Wheel of Fortune accessible")
+			fmt.Printf("   Electricity spins: %d", spins.ElectricitySpins)
+			fmt.Printf("   Gas spins: %d", spins.GasSpins)
 		}
 		
 		// Final results
-		log.Println("\n===========================================")
+		fmt.Println("\n===========================================")
 		if testPassed {
-			log.Println("🎉 All tests passed! OctoJoin should work perfectly for your account.")
-			log.Println("   You can now run OctoJoin in daemon mode with: octojoin -daemon")
+			fmt.Println("🎉 All tests passed! OctoJoin should work perfectly for your account.")
+			fmt.Println("   You can now run OctoJoin in daemon mode with: octojoin -daemon")
 		} else {
-			log.Println("❌ Some tests failed. Please check your credentials and account setup.")
-			log.Println("   Verify your account ID and API key are correct.")
+			fmt.Println("❌ Some tests failed. Please check your credentials and account setup.")
+			fmt.Println("   Verify your account ID and API key are correct.")
 		}
-		log.Println("===========================================")
+		fmt.Println("===========================================")
 		
 		return
 	}
@@ -280,6 +280,7 @@ func main() {
 
 	// Enable web UI if requested and in daemon mode
 	if webUI && daemon {
+		monitor.SetDaemonMode(true) // Use structured logging for daemon mode
 		monitor.EnableWebUI(webPort)
 		logger.Info("Web UI enabled", "url", fmt.Sprintf("http://localhost:%d", webPort))
 	} else if webUI && !daemon {

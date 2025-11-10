@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"math/rand"
 	"net/http"
@@ -306,7 +305,7 @@ func (c *OctopusClient) makeGraphQLRequestWithEndpoint(endpoint, query string, v
 
 func (c *OctopusClient) debugLog(format string, args ...interface{}) {
 	if c.debug {
-		log.Printf("DEBUG: "+format, args...)
+		c.logger.Debug(format, args...)
 	}
 }
 
@@ -540,7 +539,7 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 	c.debugLog("About to call getOctoPointsGraphQLWithCache()")
 	points, err := c.getOctoPointsGraphQLWithCache(state)
 	if err != nil {
-		log.Printf("Warning: Failed to get OctoPoints: %v", err)
+		c.logger.Warn("Failed to get OctoPoints", "error", err)
 		points = 0 // Default to 0 if GraphQL fails
 	}
 	c.debugLog("getOctoPointsGraphQLWithCache() returned %d points", points)
@@ -549,7 +548,7 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 	campaigns, err := c.getCampaignStatusWithCache(state)
 	var hasJoinedCampaign bool
 	if err != nil {
-		log.Printf("Warning: Failed to get campaign status: %v", err)
+		c.logger.Warn("Failed to get campaign status", "error", err)
 		hasJoinedCampaign = false // Default to false if GraphQL fails
 	} else {
 		hasJoinedCampaign = campaigns["octoplus-saving-sessions"]
@@ -984,7 +983,9 @@ func (c *OctopusClient) getWheelOfFortuneSpins() (*WheelOfFortuneSpins, error) {
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		c.debugLog("Wheel of Fortune request failed body: %s", string(bodyBytes))
-		log.Printf("Wheel of Fortune GraphQL error (status %d): %s", resp.StatusCode, string(bodyBytes))
+		c.logger.Error("Wheel of Fortune GraphQL error",
+			"status_code", resp.StatusCode,
+			"body", string(bodyBytes))
 		return nil, fmt.Errorf("GraphQL request failed with status %d", resp.StatusCode)
 	}
 
@@ -1087,25 +1088,33 @@ func (c *OctopusClient) spinAllAvailableWheels(spins *WheelOfFortuneSpins) ([]Wh
 		c.debugLog("Spinning electricity wheel %d of %d", i+1, spins.ElectricitySpins)
 		result, err := c.spinWheelOfFortune("ELECTRICITY")
 		if err != nil {
-			log.Printf("Failed to spin electricity wheel %d: %v", i+1, err)
+			c.logger.Error("Failed to spin electricity wheel",
+				"wheel_number", i+1,
+				"error", err)
 			continue
 		}
 		results = append(results, *result)
-		log.Printf("🎰 Electricity wheel %d: Won %d OctoPoints", i+1, result.Prize)
+		c.logger.Info("Electricity wheel spin complete",
+			"wheel_number", i+1,
+			"prize_points", result.Prize)
 		// Small delay between spins to be respectful to the API
 		time.Sleep(WheelSpinDelay)
 	}
-	
+
 	// Spin gas wheels
 	for i := 0; i < spins.GasSpins; i++ {
 		c.debugLog("Spinning gas wheel %d of %d", i+1, spins.GasSpins)
 		result, err := c.spinWheelOfFortune("GAS")
 		if err != nil {
-			log.Printf("Failed to spin gas wheel %d: %v", i+1, err)
+			c.logger.Error("Failed to spin gas wheel",
+				"wheel_number", i+1,
+				"error", err)
 			continue
 		}
 		results = append(results, *result)
-		log.Printf("🎰 Gas wheel %d: Won %d OctoPoints", i+1, result.Prize)
+		c.logger.Info("Gas wheel spin complete",
+			"wheel_number", i+1,
+			"prize_points", result.Prize)
 		// Small delay between spins to be respectful to the API
 		time.Sleep(WheelSpinDelay)
 	}

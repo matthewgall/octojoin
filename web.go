@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -46,17 +45,20 @@ type SessionData struct {
 type WebServer struct {
 	monitor *SavingSessionMonitor
 	server  *http.Server
+	logger  *Logger
 }
 
 func NewWebServer(monitor *SavingSessionMonitor, port int) *WebServer {
 	mux := http.NewServeMux()
-	
+	logger := NewLogger(monitor.client.debug).WithComponent("web_server")
+
 	ws := &WebServer{
 		monitor: monitor,
 		server: &http.Server{
 			Addr:    fmt.Sprintf(":%d", port),
 			Handler: mux,
 		},
+		logger: logger,
 	}
 	
 	mux.HandleFunc("/", ws.handleDashboard)
@@ -77,7 +79,7 @@ func (ws *WebServer) Start() error {
 }
 
 func (ws *WebServer) StartWithContext(ctx context.Context) error {
-	log.Printf("Starting web server on %s", ws.server.Addr)
+	ws.logger.Info("Starting web server", "addr", ws.server.Addr)
 
 	// Start server in goroutine
 	errCh := make(chan error, 1)
@@ -90,7 +92,7 @@ func (ws *WebServer) StartWithContext(ctx context.Context) error {
 	// Wait for context cancellation or server error
 	select {
 	case <-ctx.Done():
-		log.Println("Shutting down web server...")
+		ws.logger.Info("Shutting down web server")
 		// Give server 5 seconds to finish existing requests
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -101,7 +103,7 @@ func (ws *WebServer) StartWithContext(ctx context.Context) error {
 }
 
 func (ws *WebServer) Stop() error {
-	log.Println("Stopping web server...")
+	ws.logger.Info("Stopping web server")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return ws.server.Shutdown(ctx)
@@ -118,13 +120,13 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	// Get current session data
 	sessions, err := ws.monitor.client.GetSavingSessionsWithCache(ws.monitor.state)
 	if err != nil {
-		log.Printf("Warning: Failed to get saving sessions: %v", err)
+		ws.logger.Warn("Failed to get saving sessions", "error", err)
 		sessions = nil // Will use default values
 	}
-	
+
 	freeElectricity, err := ws.monitor.client.GetFreeElectricitySessionsWithCache(ws.monitor.state)
 	if err != nil {
-		log.Printf("Warning: Failed to get free electricity sessions: %v", err)
+		ws.logger.Warn("Failed to get free electricity sessions", "error", err)
 		freeElectricity = &FreeElectricitySessionsResponse{} // Empty response
 	}
 	
@@ -161,7 +163,7 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	accountBalance := 0.0
 	accountInfo, err := ws.monitor.client.getAccountInfoWithCache(ws.monitor.state)
 	if err != nil {
-		log.Printf("Warning: Could not get account balance: %v", err)
+		ws.logger.Warn("Could not get account balance", "error", err)
 	} else {
 		accountBalance = accountInfo.Balance
 	}
@@ -169,14 +171,14 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	// Get Wheel of Fortune spins (with caching)
 	wheelSpins, err := ws.monitor.client.getWheelOfFortuneSpinsWithCache(ws.monitor.state)
 	if err != nil {
-		log.Printf("Warning: Could not get Wheel of Fortune spins: %v", err)
+		ws.logger.Warn("Could not get Wheel of Fortune spins", "error", err)
 		wheelSpins = &WheelOfFortuneSpins{ElectricitySpins: 0, GasSpins: 0}
 	}
 
 	// Get campaign status (with caching)
 	campaigns, err := ws.monitor.client.getCampaignStatusWithCache(ws.monitor.state)
 	if err != nil {
-		log.Printf("Warning: Could not get campaign status: %v", err)
+		ws.logger.Warn("Could not get campaign status", "error", err)
 		campaigns = map[string]bool{
 			"octoplus": false,
 			"octoplus-saving-sessions": false,
@@ -230,7 +232,7 @@ func (ws *WebServer) handleUsageAPI(w http.ResponseWriter, r *http.Request) {
 	// Get usage measurements with caching
 	measurements, err := ws.monitor.client.getUsageMeasurementsWithCache(ws.monitor.state, days)
 	if err != nil {
-		log.Printf("Error getting usage measurements: %v", err)
+		ws.logger.Error("Error getting usage measurements", "error", err)
 		http.Error(w, "Failed to get usage data", http.StatusInternalServerError)
 		return
 	}
@@ -272,7 +274,7 @@ func (ws *WebServer) handleUsageRefreshAPI(w http.ResponseWriter, r *http.Reques
 	// Force cache invalidation by clearing cached usage measurements
 	if ws.monitor.state != nil {
 		ws.monitor.state.CachedUsageMeasurements = nil
-		log.Println("Cleared usage measurements cache")
+		ws.logger.Debug("Cleared usage measurements cache")
 	}
 
 	// Parse query parameters
@@ -292,19 +294,19 @@ func (ws *WebServer) handleUsageRefreshAPI(w http.ResponseWriter, r *http.Reques
 		// Get device IDs first
 		devices, err := ws.monitor.client.getSmartMeterDevicesWithCache(ws.monitor.state)
 		if err != nil {
-			log.Printf("Error getting meter devices: %v", err)
+			ws.logger.Error("Error getting meter devices", "error", err)
 			http.Error(w, "Failed to get meter devices", http.StatusInternalServerError)
 			return
 		}
-		
+
 		if len(devices) == 0 {
 			http.Error(w, "No ESME devices found", http.StatusInternalServerError)
 			return
 		}
-		
+
 		measurements, err = ws.monitor.client.getUsageMeasurements(devices, days)
 		if err != nil {
-			log.Printf("Error getting fresh usage measurements: %v", err)
+			ws.logger.Error("Error getting fresh usage measurements", "error", err)
 			http.Error(w, "Failed to get fresh usage data", http.StatusInternalServerError)
 			return
 		}

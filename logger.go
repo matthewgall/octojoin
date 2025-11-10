@@ -15,6 +15,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 )
@@ -138,4 +139,15 @@ func (l *Logger) LogCacheMiss(cacheType string, reason string) {
 		"cache_type", cacheType,
 		"reason", reason,
 	)
+}
+
+// UserMessage outputs a user-friendly message (bypasses structured logging)
+// Use this for primary user-facing output in non-daemon mode
+func (l *Logger) UserMessage(format string, args ...interface{}) {
+	fmt.Printf(format+"\n", args...)
+}
+
+// UserMessagef outputs a user-friendly message without newline
+func (l *Logger) UserMessagef(format string, args ...interface{}) {
+	fmt.Printf(format, args...)
 }

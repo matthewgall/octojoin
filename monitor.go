@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -42,6 +41,7 @@ type SavingSessionMonitor struct {
 	consecutiveEmptyChecks int
 	lastNewSessionTime   time.Time
 	logger               *Logger
+	daemonMode           bool // true if running with web UI
 }
 
 func NewSavingSessionMonitor(client *OctopusClient, accountID string) *SavingSessionMonitor {
@@ -72,6 +72,7 @@ func NewSavingSessionMonitor(client *OctopusClient, accountID string) *SavingSes
 		minPointsThreshold: 0,
 		useSmartIntervals:  true,
 		logger:             logger,
+		daemonMode:         false, // default to standalone mode
 	}
 }
 
@@ -85,6 +86,11 @@ func (m *SavingSessionMonitor) SetCheckInterval(interval time.Duration) {
 
 func (m *SavingSessionMonitor) SetSmartIntervals(enabled bool) {
 	m.useSmartIntervals = enabled
+}
+
+// SetDaemonMode sets whether the monitor is running in daemon mode with web UI
+func (m *SavingSessionMonitor) SetDaemonMode(enabled bool) {
+	m.daemonMode = enabled
 }
 
 // getSmartInterval returns an intelligent check interval based on UK time and context
@@ -236,34 +242,39 @@ func (m *SavingSessionMonitor) checkForNewSessions() {
 func (m *SavingSessionMonitor) checkSavingSessions() bool {
 	response, err := m.client.GetSavingSessionsWithCache(m.state)
 	if err != nil {
-		log.Printf("Error fetching saving sessions: %v", err)
+		m.logger.Error("Error fetching saving sessions", "error", err.Error())
 		return false
 	}
-	
+
 	foundNewSessions := false
 
-	log.Printf("Current points in wallet: %d", response.Data.OctoPoints.Account.CurrentPointsInWallet)
+	m.logger.Info("Current OctoPoints balance",
+		"points", response.Data.OctoPoints.Account.CurrentPointsInWallet,
+	)
 
 	// Get and display Wheel of Fortune spins (with caching)
 	spins, err := m.client.getWheelOfFortuneSpinsWithCache(m.state)
 	if err != nil {
-		log.Printf("Warning: Could not get Wheel of Fortune spins: %v", err)
+		m.logger.Warn("Could not get Wheel of Fortune spins", "error", err.Error())
 	} else {
 		totalSpins := spins.ElectricitySpins + spins.GasSpins
 		if totalSpins > 0 {
-			log.Printf("🎰 Wheel of Fortune spins available: %d (Electricity: %d, Gas: %d)", 
-				totalSpins, spins.ElectricitySpins, spins.GasSpins)
-			
+			m.logger.Info("Wheel of Fortune spins available",
+				"total", totalSpins,
+				"electricity", spins.ElectricitySpins,
+				"gas", spins.GasSpins,
+			)
+
 			// Auto-spin all available wheels
-			log.Printf("🎯 Auto-spinning all available wheels...")
+			m.logger.Info("Auto-spinning all available wheels")
 			results, err := m.client.spinAllAvailableWheels(spins)
 			if err != nil {
-				log.Printf("❌ Error during auto-spinning: %v", err)
+				m.logger.Error("Error during auto-spinning", "error", err.Error())
 			} else if len(results) > 0 {
 				totalPoints := 0
 				electricityPoints := 0
 				gasPoints := 0
-				
+
 				for _, result := range results {
 					totalPoints += result.Prize
 					if result.FuelType == "ELECTRICITY" {
@@ -272,24 +283,22 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 						gasPoints += result.Prize
 					}
 				}
-				
-				log.Printf("🎉 Auto-spin complete! Total OctoPoints earned: %d", totalPoints)
-				if electricityPoints > 0 {
-					log.Printf("   ⚡ Electricity spins: %d OctoPoints", electricityPoints)
-				}
-				if gasPoints > 0 {
-					log.Printf("   🔥 Gas spins: %d OctoPoints", gasPoints)
-				}
+
+				m.logger.Info("Auto-spin complete",
+					"total_points", totalPoints,
+					"electricity_points", electricityPoints,
+					"gas_points", gasPoints,
+				)
 				
 				// Clear the cached spins so we check for new ones on next run
 				if m.state != nil {
 					m.state.CachedWheelOfFortuneSpins = nil
 				}
 			} else {
-				log.Printf("⚠️  No wheels were successfully spun")
+				m.logger.Warn("No wheels were successfully spun")
 			}
 		} else {
-			log.Printf("🎰 No Wheel of Fortune spins available")
+			m.logger.Debug("No Wheel of Fortune spins available")
 		}
 	}
 
@@ -298,37 +307,58 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 			foundNewSessions = true
 			now := time.Now()
 			duration := session.EndAt.Sub(session.StartAt)
-			
+
 			if session.StartAt.After(now) {
 				// Upcoming session
 				timeUntil := session.StartAt.Sub(now)
-				log.Printf("💰 SAVING SESSION FOUND")
-				log.Printf("   Date: %s at %s", 
-					session.StartAt.Format("Monday, Jan 2"), 
-					session.StartAt.Format("15:04"))
-				log.Printf("   Duration: %s", m.formatDuration(duration))
-				log.Printf("   Reward: %d points", session.OctoPoints)
-				
-				if timeUntil < DisplayThreshold24Hours {
-					log.Printf("   Starts in %s", m.formatTimeUntil(timeUntil))
+
+				// Use user-friendly output in standalone mode, structured logging in daemon mode
+				if m.daemonMode {
+					m.logger.Info("SAVING SESSION FOUND",
+						"event_id", session.EventID,
+						"date", session.StartAt.Format("Monday, Jan 2"),
+						"time", session.StartAt.Format("15:04"),
+						"duration", m.formatDuration(duration),
+						"reward_points", session.OctoPoints,
+						"starts_in", m.formatTimeUntil(timeUntil),
+					)
 				} else {
-					log.Printf("   Starts %s", m.formatDaysUntil(timeUntil))
+					m.logger.UserMessage("🎉 SAVING SESSION FOUND")
+					m.logger.UserMessage("   Date: %s at %s", session.StartAt.Format("Monday, Jan 2"), session.StartAt.Format("15:04"))
+					m.logger.UserMessage("   Duration: %s", m.formatDuration(duration))
+					m.logger.UserMessage("   Reward: %d OctoPoints", session.OctoPoints)
+					m.logger.UserMessage("   Starts in %s", m.formatTimeUntil(timeUntil))
 				}
 
 				if m.shouldJoinSession(session) {
-					log.Printf("   Meets criteria (%d >= %d points), attempting to join...", 
-						session.OctoPoints, m.minPointsThreshold)
-					if err := m.joinSession(session.EventID); err != nil {
-						log.Printf("   Failed to join: %v", err)
+					if m.daemonMode {
+						m.logger.Info("Attempting to join session",
+							"event_id", session.EventID,
+							"points", session.OctoPoints,
+							"threshold", m.minPointsThreshold,
+						)
 					} else {
-						log.Printf("   Successfully joined session!")
+						m.logger.UserMessage("   Joining session (meets threshold of %d points)", m.minPointsThreshold)
+					}
+					if err := m.joinSession(session.EventID); err != nil {
+						m.logger.Error("Failed to join session",
+							"event_id", session.EventID,
+							"error", err.Error(),
+						)
+					} else {
+						m.logger.Info("Successfully joined session", "event_id", session.EventID)
 					}
 				} else {
-					log.Printf("   Skipped - insufficient points (%d < %d minimum)", 
-						session.OctoPoints, m.minPointsThreshold)
+					m.logger.Info("Skipped session - insufficient points",
+						"event_id", session.EventID,
+						"points", session.OctoPoints,
+						"threshold", m.minPointsThreshold,
+					)
 				}
 			} else {
-				log.Printf("⏰ Saving session %d has already started/ended - not joining", session.EventID)
+				m.logger.Debug("Saving session already started/ended",
+					"event_id", session.EventID,
+				)
 			}
 
 			m.state.KnownSessions[session.EventID] = true
@@ -336,7 +366,7 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 	}
 
 	if len(response.Data.SavingSessions.Account.JoinedEvents) == 0 {
-		log.Println("No saving sessions found")
+		m.logger.Debug("No saving sessions found")
 	}
 	
 	return foundNewSessions
@@ -345,7 +375,7 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 func (m *SavingSessionMonitor) checkFreeElectricitySessions() bool {
 	response, err := m.client.GetFreeElectricitySessionsWithCache(m.state)
 	if err != nil {
-		log.Printf("Error fetching free electricity sessions: %v", err)
+		m.logger.Error("Error fetching free electricity sessions", "error", err.Error())
 		return false
 	}
 
@@ -387,28 +417,45 @@ func (m *SavingSessionMonitor) checkFreeElectricitySessions() bool {
 		if session.StartAt.Before(now) && session.EndAt.After(now) {
 			// Currently active
 			timeLeft := session.EndAt.Sub(now)
-			log.Printf("⚡ FREE ELECTRICITY SESSION ACTIVE NOW!")
-			log.Printf("   Your electricity is currently FREE")
-			log.Printf("   Time remaining: %s", m.formatTimeUntil(timeLeft))
-			log.Printf("   Ends at %s", session.EndAt.Format("15:04"))
+			if m.daemonMode {
+				m.logger.Info("FREE ELECTRICITY SESSION ACTIVE NOW",
+					"time_remaining", m.formatTimeUntil(timeLeft),
+					"ends_at", session.EndAt.Format("15:04"),
+				)
+			} else {
+				m.logger.UserMessage("⚡ FREE ELECTRICITY SESSION ACTIVE NOW!")
+				m.logger.UserMessage("   Your electricity is currently FREE")
+				m.logger.UserMessage("   Time remaining: %s", m.formatTimeUntil(timeLeft))
+				m.logger.UserMessage("   Ends at %s", session.EndAt.Format("15:04"))
+			}
 		} else {
 			// Upcoming session
-			log.Printf("🔋 FREE ELECTRICITY SESSION - %s", alertType)
-			log.Printf("   Date: %s at %s", 
-				session.StartAt.Format("Monday, Jan 2"), 
-				session.StartAt.Format("15:04"))
-			log.Printf("   Duration: %s", m.formatDuration(duration))
+			startsIn := ""
 			if timeUntil < DisplayThreshold24Hours {
-				log.Printf("   Starts in %s", m.formatTimeUntil(timeUntil))
+				startsIn = m.formatTimeUntil(timeUntil)
 			} else {
-				log.Printf("   Starts %s", m.formatDaysUntil(timeUntil))
+				startsIn = m.formatDaysUntil(timeUntil)
 			}
-			log.Printf("   No action needed - automatically free!")
+			if m.daemonMode {
+				m.logger.Info("FREE ELECTRICITY SESSION FOUND",
+					"alert_type", alertType,
+					"date", session.StartAt.Format("Monday, Jan 2"),
+					"time", session.StartAt.Format("15:04"),
+					"duration", m.formatDuration(duration),
+					"starts_in", startsIn,
+				)
+			} else {
+				m.logger.UserMessage("🔋 FREE ELECTRICITY SESSION - %s", alertType)
+				m.logger.UserMessage("   Date: %s at %s", session.StartAt.Format("Monday, Jan 2"), session.StartAt.Format("15:04"))
+				m.logger.UserMessage("   Duration: %s", m.formatDuration(duration))
+				m.logger.UserMessage("   Starts in %s", startsIn)
+				m.logger.UserMessage("   No action needed - automatically free!")
+			}
 		}
 	}
 
 	if currentSessionsFound == 0 {
-		log.Println("No current or upcoming free electricity sessions found")
+		m.logger.Debug("No current or upcoming free electricity sessions found")
 	}
 	
 	return foundNewSessions
@@ -422,39 +469,69 @@ func (m *SavingSessionMonitor) CheckOnce() {
 func (m *SavingSessionMonitor) displayCampaignStatus() {
 	campaigns, err := m.client.getCampaignStatusWithCache(m.state)
 	if err != nil {
-		log.Printf("Warning: Could not check campaign status: %v", err)
+		m.logger.Warn("Could not check campaign status", "error", err.Error())
 		return
 	}
 
-	log.Printf("Feature Status:")
-	
 	// Check saving sessions requirements
 	octoplusOK := campaigns["octoplus"]
 	savingSessionsOK := campaigns["octoplus-saving-sessions"]
 	freeElectricityOK := campaigns["free_electricity"]
-	
-	if octoplusOK && savingSessionsOK {
-		log.Printf("✅ Saving Sessions: ENABLED (octoplus + octoplus-saving-sessions)")
-	} else {
-		log.Printf("❌ Saving Sessions: DISABLED")
-		if !octoplusOK {
-			log.Printf("   Missing: octoplus campaign")
+
+	if m.daemonMode {
+		// Structured logging for daemon mode
+		m.logger.Info("Feature Status Check",
+			"saving_sessions_enabled", octoplusOK && savingSessionsOK,
+			"has_octoplus", octoplusOK,
+			"has_saving_sessions", savingSessionsOK,
+			"free_electricity_enabled", freeElectricityOK,
+		)
+
+		if octoplusOK && savingSessionsOK {
+			m.logger.Info("Saving Sessions: ENABLED", "campaigns", "octoplus + octoplus-saving-sessions")
+		} else {
+			missingCampaigns := []string{}
+			if !octoplusOK {
+				missingCampaigns = append(missingCampaigns, "octoplus")
+			}
+			if !savingSessionsOK {
+				missingCampaigns = append(missingCampaigns, "octoplus-saving-sessions")
+			}
+			m.logger.Info("Saving Sessions: DISABLED", "missing_campaigns", missingCampaigns)
 		}
-		if !savingSessionsOK {
-			log.Printf("   Missing: octoplus-saving-sessions campaign")
+
+		if freeElectricityOK {
+			m.logger.Info("Free Electricity: ENABLED", "campaign", "free_electricity")
+		} else {
+			m.logger.Info("Free Electricity: DISABLED", "missing_campaign", "free_electricity")
 		}
-		log.Printf("   To enable: Sign up for OctoPlus and Saving Sessions at octopus.energy")
-	}
-	
-	if freeElectricityOK {
-		log.Printf("✅ Free Electricity: ENABLED (free_electricity)")
 	} else {
-		log.Printf("❌ Free Electricity: DISABLED")
-		log.Printf("   Missing: free_electricity campaign")
-		log.Printf("   To enable: Sign up for Free Electricity sessions at octopus.energy")
+		// User-friendly output for standalone mode
+		m.logger.UserMessage("Feature Status:")
+
+		if octoplusOK && savingSessionsOK {
+			m.logger.UserMessage("✅ Saving Sessions: ENABLED (octoplus + octoplus-saving-sessions)")
+		} else {
+			m.logger.UserMessage("❌ Saving Sessions: DISABLED")
+			if !octoplusOK {
+				m.logger.UserMessage("   Missing: octoplus campaign")
+			}
+			if !savingSessionsOK {
+				m.logger.UserMessage("   Missing: octoplus-saving-sessions campaign")
+			}
+			m.logger.UserMessage("   To enable: Sign up for OctoPlus and Saving Sessions at octopus.energy")
+		}
+
+		if freeElectricityOK {
+			m.logger.UserMessage("✅ Free Electricity: ENABLED (free_electricity)")
+		} else {
+			m.logger.UserMessage("❌ Free Electricity: DISABLED")
+			m.logger.UserMessage("   Missing: free_electricity campaign")
+			m.logger.UserMessage("   To enable: Sign up for Free Electricity sessions at octopus.energy")
+		}
+
+		m.logger.UserMessage("")
 	}
-	
-	log.Printf("")
 }
 
 func (m *SavingSessionMonitor) shouldJoinSession(session SavingSession) bool {
