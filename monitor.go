@@ -41,22 +41,25 @@ type SavingSessionMonitor struct {
 	useSmartIntervals    bool
 	consecutiveEmptyChecks int
 	lastNewSessionTime   time.Time
+	logger               *Logger
 }
 
 func NewSavingSessionMonitor(client *OctopusClient, accountID string) *SavingSessionMonitor {
+	logger := NewLogger(client.debug).WithComponent("monitor").WithAccountID(accountID)
+
 	state, err := LoadState(accountID)
 	if err != nil {
-		log.Printf("Failed to load state, starting fresh: %v", err)
+		logger.Warn("Failed to load state, starting fresh", "error", err.Error())
 		state = &AppState{
 			AlertStates:                  make(map[string]*FreeElectricityAlertState),
 			KnownSessions:                make(map[int]bool),
 			KnownFreeElectricitySessions: make(map[string]bool),
 		}
 	}
-	
+
 	// Clean up expired sessions
 	state.CleanupExpiredSessions()
-	
+
 	// Set state on client for JWT token caching
 	client.SetState(state)
 	
@@ -68,6 +71,7 @@ func NewSavingSessionMonitor(client *OctopusClient, accountID string) *SavingSes
 		stopCh:             make(chan struct{}),
 		minPointsThreshold: 0,
 		useSmartIntervals:  true,
+		logger:             logger,
 	}
 }
 
@@ -141,16 +145,16 @@ func (m *SavingSessionMonitor) Start() {
 }
 
 func (m *SavingSessionMonitor) StartWithContext(ctx context.Context) error {
-	log.Println("Starting saving session monitoring...")
+	m.logger.Info("Starting saving session monitoring")
 	if m.useSmartIntervals {
-		log.Println("Smart interval adjustment enabled")
+		m.logger.Info("Smart interval adjustment enabled")
 	}
 
 	// Start web server if enabled
 	if m.webServer != nil {
 		go func() {
 			if err := m.webServer.StartWithContext(ctx); err != nil && err != context.Canceled {
-				log.Printf("Web server error: %v", err)
+				m.logger.Error("Web server error", "error", err.Error())
 			}
 		}()
 	}
@@ -164,7 +168,7 @@ func (m *SavingSessionMonitor) StartWithContext(ctx context.Context) error {
 		timer := time.NewTimer(interval)
 
 		if m.useSmartIntervals {
-			log.Printf("Next check in %s", m.formatDuration(interval))
+			m.logger.Debug("Next check scheduled", "interval", m.formatDuration(interval))
 		}
 
 		select {
@@ -172,11 +176,11 @@ func (m *SavingSessionMonitor) StartWithContext(ctx context.Context) error {
 			m.checkForNewSessions()
 		case <-m.stopCh:
 			timer.Stop()
-			log.Println("Stopping saving session monitoring...")
+			m.logger.Info("Stopping saving session monitoring")
 			return nil
 		case <-ctx.Done():
 			timer.Stop()
-			log.Println("Stopping saving session monitoring (context canceled)...")
+			m.logger.Info("Stopping saving session monitoring (context canceled)")
 			// Stop web server gracefully
 			if m.webServer != nil {
 				m.webServer.Stop()
@@ -193,37 +197,39 @@ func (m *SavingSessionMonitor) Stop() {
 }
 
 func (m *SavingSessionMonitor) checkForNewSessions() {
-	log.Println("Checking for new sessions...")
-	
+	m.logger.Info("Checking for new sessions")
+
 	foundNewSessions := false
-	
+
 	// Check saving sessions
 	if m.checkSavingSessions() {
 		foundNewSessions = true
 	}
-	
+
 	// Check free electricity sessions
 	if m.checkFreeElectricitySessions() {
 		foundNewSessions = true
 	}
-	
+
 	// Update event-driven tracking
 	if foundNewSessions {
 		m.lastNewSessionTime = time.Now()
 		m.consecutiveEmptyChecks = 0
 		if m.useSmartIntervals {
-			log.Println("🎯 New sessions found - will check more frequently for potential batches")
+			m.logger.Info("New sessions found - will check more frequently for potential batches")
 		}
 	} else {
 		m.consecutiveEmptyChecks++
 		if m.useSmartIntervals && m.consecutiveEmptyChecks > 1 {
-			log.Printf("📉 No new sessions found (%d consecutive checks) - extending next interval", m.consecutiveEmptyChecks)
+			m.logger.Info("No new sessions found - extending next interval",
+				"consecutive_empty_checks", m.consecutiveEmptyChecks,
+			)
 		}
 	}
-	
+
 	// Save state after checks
 	if err := m.state.Save(m.accountID); err != nil {
-		log.Printf("Warning: Failed to save state: %v", err)
+		m.logger.Warn("Failed to save state", "error", err.Error())
 	}
 }
 
