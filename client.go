@@ -56,6 +56,7 @@ type OctopusClient struct {
 	jwtExpiry      time.Time
 	debug          bool
 	state          *AppState
+	logger         *Logger
 }
 
 type SavingSession struct {
@@ -181,6 +182,7 @@ type UsageMeasurementsResponse struct {
 }
 
 func NewOctopusClient(accountID, apiKey string, debug bool) *OctopusClient {
+	logger := NewLogger(debug).WithComponent("octopus_client")
 	return &OctopusClient{
 		AccountID:   accountID,
 		APIKey:      apiKey,
@@ -188,6 +190,7 @@ func NewOctopusClient(accountID, apiKey string, debug bool) *OctopusClient {
 		minInterval: HTTPMinInterval,
 		maxRetries:  HTTPMaxRetries,
 		debug:       debug,
+		logger:      logger,
 		client: &http.Client{
 			Timeout: HTTPClientTimeout,
 		},
@@ -334,21 +337,38 @@ func (c *OctopusClient) makeRequestWithRetry(method, endpoint string, body inter
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", GetUserAgent())
 
-	c.lastRequestTime = time.Now()
+	startTime := time.Now()
+	c.lastRequestTime = startTime
 	resp, err := c.client.Do(req)
+	duration := time.Since(startTime).Seconds()
+
 	if err != nil {
 		if attempt < c.maxRetries {
 			backoff := c.calculateBackoff(attempt)
-			log.Printf("Request failed (attempt %d/%d): %v. Retrying in %v...", attempt+1, c.maxRetries+1, err, backoff)
+			c.logger.Warn("Request failed, retrying",
+				"method", method,
+				"endpoint", endpoint,
+				"attempt", attempt+1,
+				"max_attempts", c.maxRetries+1,
+				"backoff_ms", backoff.Milliseconds(),
+				"error", err.Error(),
+			)
 			time.Sleep(backoff)
 			return c.makeRequestWithRetry(method, endpoint, body, attempt+1)
 		}
-		return nil, err
+		return nil, NewAPIError(0, endpoint, "request failed", err)
 	}
+
+	c.logger.LogAPIRequest(method, endpoint, resp.StatusCode, duration)
 
 	if c.shouldRetry(resp.StatusCode) && attempt < c.maxRetries {
 		backoff := c.calculateBackoffFromResponse(resp, attempt)
-		log.Printf("Received %d status (attempt %d/%d). Retrying in %v...", resp.StatusCode, attempt+1, c.maxRetries+1, backoff)
+		c.logger.Warn("Retrying due to status code",
+			"status_code", resp.StatusCode,
+			"attempt", attempt+1,
+			"max_attempts", c.maxRetries+1,
+			"backoff_ms", backoff.Milliseconds(),
+		)
 		resp.Body.Close()
 		time.Sleep(backoff)
 		return c.makeRequestWithRetry(method, endpoint, body, attempt+1)
@@ -362,7 +382,9 @@ func (c *OctopusClient) enforceRateLimit() {
 		elapsed := time.Since(c.lastRequestTime)
 		if elapsed < c.minInterval {
 			sleep := c.minInterval - elapsed
-			log.Printf("Rate limiting: sleeping for %v", sleep)
+			c.logger.Debug("Rate limiting",
+				"sleep_ms", sleep.Milliseconds(),
+			)
 			time.Sleep(sleep)
 		}
 	}
