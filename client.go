@@ -256,9 +256,27 @@ func (c *OctopusClient) makeGraphQLRequestWithEndpoint(endpoint, query string, v
 	req.Header.Set("Authorization", c.jwtToken)
 	req.Header.Set("User-Agent", GetUserAgent())
 
+	// Log GraphQL request details in debug mode
+	c.debugLogRequest("POST", endpoint, req.Header, bodyBytes)
+
+	startTime := time.Now()
 	resp, err := c.client.Do(req)
+	duration := time.Since(startTime).Seconds()
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+
+	// Log GraphQL response in debug mode (before any body reading)
+	if c.debug {
+		// We need to be careful here since we might read the body later for error checking
+		// So we'll only log a preview without consuming the body yet
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err == nil {
+			resp.Body.Close()
+			c.debugLogResponse(resp, bodyBytes, duration)
+			// Restore the body
+			resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
 	}
 
 	// Check for authentication errors that indicate token expiration
@@ -309,16 +327,79 @@ func (c *OctopusClient) debugLog(format string, args ...interface{}) {
 	}
 }
 
+// debugLogRequest logs detailed request information in debug mode
+func (c *OctopusClient) debugLogRequest(method, url string, headers http.Header, bodyBytes []byte) {
+	if !c.debug {
+		return
+	}
+
+	// Mask sensitive headers
+	maskedHeaders := make(map[string]string)
+	for key, values := range headers {
+		if len(values) > 0 {
+			if key == "Authorization" {
+				// Show only first and last 4 chars of auth tokens
+				val := values[0]
+				if len(val) > 12 {
+					maskedHeaders[key] = val[:6] + "..." + val[len(val)-4:]
+				} else {
+					maskedHeaders[key] = "***"
+				}
+			} else {
+				maskedHeaders[key] = values[0]
+			}
+		}
+	}
+
+	c.logger.Debug("→ HTTP Request",
+		"method", method,
+		"url", url,
+		"headers", maskedHeaders,
+	)
+
+	if len(bodyBytes) > 0 {
+		bodyStr := string(bodyBytes)
+		// Truncate long bodies
+		if len(bodyStr) > 500 {
+			bodyStr = bodyStr[:500] + "... (truncated)"
+		}
+		c.logger.Debug("  Request Body", "body", bodyStr)
+	}
+}
+
+// debugLogResponse logs detailed response information in debug mode
+func (c *OctopusClient) debugLogResponse(resp *http.Response, bodyPreview []byte, duration float64) {
+	if !c.debug {
+		return
+	}
+
+	c.logger.Debug("← HTTP Response",
+		"status", resp.StatusCode,
+		"status_text", resp.Status,
+		"duration_ms", duration*1000,
+		"content_type", resp.Header.Get("Content-Type"),
+	)
+
+	if len(bodyPreview) > 0 {
+		bodyStr := string(bodyPreview)
+		// Truncate long response bodies
+		if len(bodyStr) > 500 {
+			bodyStr = bodyStr[:500] + "... (truncated)"
+		}
+		c.logger.Debug("  Response Body", "body", bodyStr)
+	}
+}
+
 func (c *OctopusClient) makeRequest(method, endpoint string, body interface{}) (*http.Response, error) {
 	return c.makeRequestWithRetry(method, endpoint, body, 0)
 }
 
 func (c *OctopusClient) makeRequestWithRetry(method, endpoint string, body interface{}, attempt int) (*http.Response, error) {
 	c.enforceRateLimit()
-	
+
 	var reqBody []byte
 	var err error
-	
+
 	if body != nil {
 		reqBody, err = json.Marshal(body)
 		if err != nil {
@@ -335,6 +416,9 @@ func (c *OctopusClient) makeRequestWithRetry(method, endpoint string, body inter
 	req.SetBasicAuth(c.APIKey, "")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", GetUserAgent())
+
+	// Log request details in debug mode
+	c.debugLogRequest(method, url, req.Header, reqBody)
 
 	startTime := time.Now()
 	c.lastRequestTime = startTime
@@ -359,6 +443,17 @@ func (c *OctopusClient) makeRequestWithRetry(method, endpoint string, body inter
 	}
 
 	c.logger.LogAPIRequest(method, endpoint, resp.StatusCode, duration)
+
+	// Log response details in debug mode (read preview without consuming body)
+	if c.debug {
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err == nil {
+			resp.Body.Close()
+			c.debugLogResponse(resp, bodyBytes, duration)
+			// Restore the response body for the caller
+			resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+	}
 
 	if c.shouldRetry(resp.StatusCode) && attempt < c.maxRetries {
 		backoff := c.calculateBackoffFromResponse(resp, attempt)
