@@ -130,3 +130,80 @@ func TestWriteMetric(t *testing.T) {
 		t.Error("Expected value 100 in output")
 	}
 }
+
+func TestAPIMetrics(t *testing.T) {
+	// Create a test HTTP server that simulates the Octopus API
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"status": "ok"}`))
+	}))
+	defer server.Close()
+
+	// Create client with debug disabled
+	client := NewOctopusClient("A-TEST", "sk_live_test", false)
+	client.BaseURL = server.URL
+
+	// Make a few test requests to generate metrics
+	for i := 0; i < 3; i++ {
+		resp, err := client.makeRequest("GET", "/test-endpoint", nil)
+		if err != nil {
+			t.Fatalf("Request %d failed: %v", i, err)
+		}
+		resp.Body.Close()
+	}
+
+	// Verify metrics were tracked (at least 3 requests)
+	if client.metrics.TotalRequests < 3 {
+		t.Errorf("Expected at least 3 total requests, got %d", client.metrics.TotalRequests)
+	}
+
+	if len(client.metrics.RequestDurations) == 0 {
+		t.Error("Expected request durations to be tracked, but map is empty")
+	}
+
+	// Rate limit sleeps should be tracked (we have minInterval enforced)
+	if client.metrics.RateLimitSleeps < 2 {
+		t.Errorf("Expected at least 2 rate limit sleeps (for 3 requests), got %d", client.metrics.RateLimitSleeps)
+	}
+
+	// Create a monitor with minimal state
+	monitor := NewSavingSessionMonitor(client, "A-TEST")
+
+	// Create metrics collector
+	metricsCollector := NewMetricsCollector(client, monitor)
+
+	// Collect metrics
+	metricsOutput := metricsCollector.collectMetrics()
+
+	// Verify key metrics are present in output
+	expectedMetrics := []string{
+		"octojoin_api_requests_total",
+		"octojoin_rate_limit_sleeps_total",
+		"octojoin_rate_limit_sleep_seconds_total",
+		"octojoin_api_request_duration_seconds",
+	}
+
+	for _, metric := range expectedMetrics {
+		if !strings.Contains(metricsOutput, metric) {
+			t.Errorf("Expected metric '%s' not found in output", metric)
+		}
+	}
+
+	// Verify the metrics have actual values (not just headers)
+	lines := strings.Split(metricsOutput, "\n")
+	foundRequestTotal := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "octojoin_api_requests_total ") {
+			foundRequestTotal = true
+			// Should have a numeric value (metrics collection may make additional requests)
+			if !strings.Contains(line, " ") {
+				t.Errorf("Expected octojoin_api_requests_total to have a value, got line: %s", line)
+			}
+		}
+	}
+
+	if !foundRequestTotal {
+		t.Error("octojoin_api_requests_total metric value not found in output")
+	}
+}

@@ -203,7 +203,53 @@ func (m *MetricsCollector) collectMetrics() string {
 			}, cacheAge)
 		}
 	}
-	
+
+	// API performance metrics
+	m.writeMetricHeader(&metrics, "octojoin_api_requests_total", "counter", "Total number of API requests")
+	m.writeMetric(&metrics, "octojoin_api_requests_total", nil, float64(m.client.metrics.TotalRequests))
+
+	// Rate limiting metrics
+	m.writeMetricHeader(&metrics, "octojoin_rate_limit_sleeps_total", "counter", "Number of times rate limiting was triggered")
+	m.writeMetric(&metrics, "octojoin_rate_limit_sleeps_total", nil, float64(m.client.metrics.RateLimitSleeps))
+
+	m.writeMetricHeader(&metrics, "octojoin_rate_limit_sleep_seconds_total", "counter", "Total time spent sleeping due to rate limits")
+	m.writeMetric(&metrics, "octojoin_rate_limit_sleep_seconds_total", nil, m.client.metrics.TotalSleepSeconds)
+
+	// API call duration metrics (summary statistics per endpoint)
+	for endpoint, durations := range m.client.metrics.RequestDurations {
+		if len(durations) == 0 {
+			continue
+		}
+
+		// Calculate summary statistics
+		var sum, min, max float64
+		min = durations[0]
+		for _, d := range durations {
+			sum += d
+			if d < min {
+				min = d
+			}
+			if d > max {
+				max = d
+			}
+		}
+		avg := sum / float64(len(durations))
+
+		m.writeMetricHeader(&metrics, "octojoin_api_request_duration_seconds", "gauge", "API request duration statistics by endpoint")
+
+		labels := map[string]string{"endpoint": endpoint, "stat": "min"}
+		m.writeMetric(&metrics, "octojoin_api_request_duration_seconds", labels, min)
+
+		labels = map[string]string{"endpoint": endpoint, "stat": "max"}
+		m.writeMetric(&metrics, "octojoin_api_request_duration_seconds", labels, max)
+
+		labels = map[string]string{"endpoint": endpoint, "stat": "avg"}
+		m.writeMetric(&metrics, "octojoin_api_request_duration_seconds", labels, avg)
+
+		labels = map[string]string{"endpoint": endpoint, "stat": "count"}
+		m.writeMetric(&metrics, "octojoin_api_request_duration_seconds", labels, float64(len(durations)))
+	}
+
 	return metrics.String()
 }
 

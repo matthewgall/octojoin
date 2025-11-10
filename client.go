@@ -43,6 +43,24 @@ func getEndpoint(key string) string {
 	return octopusEndpoints["api"]
 }
 
+// APIMetrics tracks API call performance and rate limiting
+type APIMetrics struct {
+	// API call durations by endpoint
+	RequestDurations map[string][]float64 // endpoint -> list of durations in seconds
+
+	// Rate limiting metrics
+	TotalRequests     int64   // Total number of API requests
+	RateLimitSleeps   int64   // Number of times rate limiting was triggered
+	TotalSleepSeconds float64 // Total time spent sleeping due to rate limits
+}
+
+// NewAPIMetrics creates a new metrics tracker
+func NewAPIMetrics() *APIMetrics {
+	return &APIMetrics{
+		RequestDurations: make(map[string][]float64),
+	}
+}
+
 type OctopusClient struct {
 	AccountID      string
 	APIKey         string
@@ -56,6 +74,7 @@ type OctopusClient struct {
 	debug          bool
 	state          *AppState
 	logger         *Logger
+	metrics        *APIMetrics
 }
 
 type SavingSession struct {
@@ -190,6 +209,7 @@ func NewOctopusClient(accountID, apiKey string, debug bool) *OctopusClient {
 		maxRetries:  HTTPMaxRetries,
 		debug:       debug,
 		logger:      logger,
+		metrics:     NewAPIMetrics(),
 		client: &http.Client{
 			Timeout: HTTPClientTimeout,
 		},
@@ -425,6 +445,9 @@ func (c *OctopusClient) makeRequestWithRetry(method, endpoint string, body inter
 	resp, err := c.client.Do(req)
 	duration := time.Since(startTime).Seconds()
 
+	// Track total requests (including failed ones)
+	c.metrics.TotalRequests++
+
 	if err != nil {
 		if attempt < c.maxRetries {
 			backoff := c.calculateBackoff(attempt)
@@ -443,6 +466,9 @@ func (c *OctopusClient) makeRequestWithRetry(method, endpoint string, body inter
 	}
 
 	c.logger.LogAPIRequest(method, endpoint, resp.StatusCode, duration)
+
+	// Track API call duration by endpoint
+	c.metrics.RequestDurations[endpoint] = append(c.metrics.RequestDurations[endpoint], duration)
 
 	// Log response details in debug mode (read preview without consuming body)
 	if c.debug {
@@ -479,6 +505,11 @@ func (c *OctopusClient) enforceRateLimit() {
 			c.logger.Debug("Rate limiting",
 				"sleep_ms", sleep.Milliseconds(),
 			)
+
+			// Track rate limiting metrics
+			c.metrics.RateLimitSleeps++
+			c.metrics.TotalSleepSeconds += sleep.Seconds()
+
 			time.Sleep(sleep)
 		}
 	}
