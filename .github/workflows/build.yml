@@ -72,7 +72,7 @@ jobs:
         go build -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT" -o dist/octojoin.exe .
     
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: octojoin-${{ matrix.os }}-go${{ matrix.go-version }}
         path: dist/
