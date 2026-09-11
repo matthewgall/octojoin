@@ -100,6 +100,7 @@ type FreeElectricitySession struct {
 	Code    string    `json:"code"`
 	StartAt time.Time `json:"start"`
 	EndAt   time.Time `json:"end"`
+	Joined  bool      `json:"joined,omitempty"`
 }
 
 type FreeElectricitySessionsResponse struct {

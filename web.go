@@ -142,22 +142,41 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 			joinedMap[session.EventID] = true
 			if session.EndAt.After(now) {
 				session.Joined = true
-				upcomingSavingSessions = append(upcomingSavingSessions, session)
+				if session.OctoPoints > 0 {
+					upcomingSavingSessions = append(upcomingSavingSessions, session)
+				} else {
+					upcomingFreeElectricitySessions = append(upcomingFreeElectricitySessions, FreeElectricitySession{
+						Code:    session.Code,
+						StartAt: session.StartAt,
+						EndAt:   session.EndAt,
+						Joined:  true,
+					})
+				}
 			}
 		}
 	}
 	if sessions != nil && sessions.Data.SavingSessions.Events != nil {
 		for _, event := range sessions.Data.SavingSessions.Events {
 			if event.EndAt.After(now) && !joinedMap[event.ID] {
-				upcomingSavingSessions = append(upcomingSavingSessions, SavingSession{
-					EventID:    event.ID,
-					Code:       event.Code,
-					StartAt:    event.StartAt,
-					EndAt:      event.EndAt,
-					OctoPoints: event.RewardPerKwhInOctoPoints,
-					Status:     event.Status,
-					Joined:     false,
-				})
+				if event.RewardPerKwhInOctoPoints > 0 {
+					upcomingSavingSessions = append(upcomingSavingSessions, SavingSession{
+						EventID:    event.ID,
+						Code:       event.Code,
+						StartAt:    event.StartAt,
+						EndAt:      event.EndAt,
+						OctoPoints: event.RewardPerKwhInOctoPoints,
+						Status:     event.Status,
+						Joined:     false,
+					})
+				} else {
+					// 0 points = Weekend Happy Hour / Free Electricity slot
+					upcomingFreeElectricitySessions = append(upcomingFreeElectricitySessions, FreeElectricitySession{
+						Code:    event.Code,
+						StartAt: event.StartAt,
+						EndAt:   event.EndAt,
+						Joined:  false,
+					})
+				}
 			}
 		}
 	}
@@ -166,7 +185,16 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	if freeElectricity != nil {
 		for _, session := range freeElectricity.Data {
 			if session.EndAt.After(now) {
-				upcomingFreeElectricitySessions = append(upcomingFreeElectricitySessions, session)
+				alreadyAdded := false
+				for _, existing := range upcomingFreeElectricitySessions {
+					if existing.Code == session.Code || (existing.StartAt.Equal(session.StartAt) && existing.EndAt.Equal(session.EndAt)) {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					upcomingFreeElectricitySessions = append(upcomingFreeElectricitySessions, session)
+				}
 			}
 		}
 	}
@@ -207,9 +235,9 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	campaignStatus := CampaignStatus{
 		HasOctoplus:             campaigns["octoplus"],
 		HasSavingSessions:       campaigns["octoplus-saving-sessions"],
-		HasFreeElectricity:      campaigns["free_electricity"],
+		HasFreeElectricity:      campaigns["free_electricity"] || len(upcomingFreeElectricitySessions) > 0,
 		SavingSessionsEnabled:   campaigns["octoplus"] && campaigns["octoplus-saving-sessions"],
-		FreeElectricityEnabled:  campaigns["free_electricity"],
+		FreeElectricityEnabled:  campaigns["free_electricity"] || len(upcomingFreeElectricitySessions) > 0,
 	}
 	
 	// Ensure arrays are never nil
@@ -867,11 +895,14 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
                             const startTime = new Date(session.start);
                             const endTime = new Date(session.end);
                             const duration = Math.floor((endTime - startTime) / (1000 * 60));
+                            const statusBadge = session.joined 
+                                ? '<span style="color: #4ade80; font-weight: bold;">Booked</span>' 
+                                : '<span style="color: #94a3b8;">Select in Octopus app</span>';
                             return ` + "`" + `
                                 <div class="session">
                                     <div class="session-date">${formatDate(session.start)}</div>
                                     <div class="session-details">
-                                        Duration: ${formatDuration(duration)} | Free electricity!
+                                        Duration: ${formatDuration(duration)} | Free Electricity | ${statusBadge}
                                     </div>
                                     <div class="session-countdown" data-target="${session.start}"></div>
                                 </div>
