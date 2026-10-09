@@ -158,7 +158,15 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	if sessions != nil && sessions.Data.SavingSessions.Events != nil {
 		for _, event := range sessions.Data.SavingSessions.Events {
 			if event.EndAt.After(now) && !joinedMap[event.ID] {
-				if event.RewardPerKwhInOctoPoints > 0 {
+				if event.EventType == "WEEKEND_HAPPY_HOUR" {
+					// 0 points = Weekend Happy Hour slot (unselected)
+					upcomingFreeElectricitySessions = append(upcomingFreeElectricitySessions, FreeElectricitySession{
+						Code:    event.Code,
+						StartAt: event.StartAt,
+						EndAt:   event.EndAt,
+						Joined:  false,
+					})
+				} else {
 					upcomingSavingSessions = append(upcomingSavingSessions, SavingSession{
 						EventID:    event.ID,
 						Code:       event.Code,
@@ -167,14 +175,6 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 						OctoPoints: event.RewardPerKwhInOctoPoints,
 						Status:     event.Status,
 						Joined:     false,
-					})
-				} else {
-					// 0 points = Weekend Happy Hour / Free Electricity slot
-					upcomingFreeElectricitySessions = append(upcomingFreeElectricitySessions, FreeElectricitySession{
-						Code:    event.Code,
-						StartAt: event.StartAt,
-						EndAt:   event.EndAt,
-						Joined:  false,
 					})
 				}
 			}

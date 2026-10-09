@@ -83,6 +83,7 @@ type SavingSessionEvent struct {
 	StartAt                  time.Time `json:"startAt"`
 	EndAt                    time.Time `json:"endAt"`
 	Status                   string    `json:"status"`
+	EventType                string    `json:"eventType"`
 	RewardPerKwhInOctoPoints int       `json:"rewardPerKwhInOctoPoints"`
 }
 
@@ -722,6 +723,7 @@ func (c *OctopusClient) getSavingSessionsGraphQL() (*SavingSessionsResponse, err
 				startAt
 				endAt
 				status
+				eventType
 				rewardPerKwhInOctoPoints
 			}
 		}

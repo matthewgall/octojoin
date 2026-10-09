@@ -564,7 +564,10 @@ func (m *SavingSessionMonitor) displayCampaignStatus() {
 }
 
 func (m *SavingSessionMonitor) shouldJoinSession(session SavingSession) bool {
-	return session.OctoPoints > 0 && session.OctoPoints >= m.minPointsThreshold
+	if session.OctoPoints == 0 {
+		return m.minPointsThreshold == 0
+	}
+	return session.OctoPoints >= m.minPointsThreshold
 }
 
 func (m *SavingSessionMonitor) joinSession(eventID int, eventCode string) error {
