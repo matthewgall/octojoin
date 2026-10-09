@@ -135,6 +135,14 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	var upcomingSavingSessions []SavingSession
 	var upcomingFreeElectricitySessions []FreeElectricitySession
 	
+	// Build lookup map of all events for metadata (points, code, eventType)
+	eventMetaMap := make(map[int]SavingSessionEvent)
+	if sessions != nil && sessions.Data.SavingSessions.Events != nil {
+		for _, e := range sessions.Data.SavingSessions.Events {
+			eventMetaMap[e.ID] = e
+		}
+	}
+
 	// Filter saving sessions (show joined sessions, and any available upcoming sessions)
 	joinedMap := make(map[int]bool)
 	if sessions != nil && sessions.Data.SavingSessions.Account.JoinedEvents != nil {
@@ -142,15 +150,20 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 			joinedMap[session.EventID] = true
 			if session.EndAt.After(now) {
 				session.Joined = true
-				if session.OctoPoints > 0 {
-					upcomingSavingSessions = append(upcomingSavingSessions, session)
-				} else {
+				meta, hasMeta := eventMetaMap[session.EventID]
+				if hasMeta {
+					session.OctoPoints = meta.RewardPerKwhInOctoPoints
+					session.Code = meta.Code
+				}
+				if hasMeta && meta.EventType == "WEEKEND_HAPPY_HOUR" {
 					upcomingFreeElectricitySessions = append(upcomingFreeElectricitySessions, FreeElectricitySession{
 						Code:    session.Code,
 						StartAt: session.StartAt,
 						EndAt:   session.EndAt,
 						Joined:  true,
 					})
+				} else {
+					upcomingSavingSessions = append(upcomingSavingSessions, session)
 				}
 			}
 		}

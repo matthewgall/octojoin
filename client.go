@@ -94,14 +94,14 @@ type SavingSession struct {
 	EndAt      time.Time `json:"endAt"`
 	OctoPoints int       `json:"octoPoints"`
 	Status     string    `json:"status,omitempty"`
-	Joined     bool      `json:"joined,omitempty"`
+	Joined     bool      `json:"joined"`
 }
 
 type FreeElectricitySession struct {
 	Code    string    `json:"code"`
 	StartAt time.Time `json:"start"`
 	EndAt   time.Time `json:"end"`
-	Joined  bool      `json:"joined,omitempty"`
+	Joined  bool      `json:"joined"`
 }
 
 type FreeElectricitySessionsResponse struct {
