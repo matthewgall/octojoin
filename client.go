@@ -686,11 +686,8 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 	c.debugLog("getOctoPointsGraphQLWithCache() returned %d points", points)
 
 	// Combine the data
-	result := &SavingSessionsResponse{}
-	result.Data.SavingSessions.Account.HasJoinedCampaign = savingSessions.Data.SavingSessions.Account.HasJoinedCampaign
-	result.Data.SavingSessions.Account.JoinedEvents = savingSessions.Data.SavingSessions.Account.JoinedEvents
-	result.Data.SavingSessions.Events = savingSessions.Data.SavingSessions.Events
-	result.Data.OctoPoints.Account.CurrentPointsInWallet = points
+	savingSessions.Data.OctoPoints.Account.CurrentPointsInWallet = points
+	result := savingSessions
 
 	// Update cache if state is provided
 	if state != nil {

@@ -200,7 +200,7 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 			if session.EndAt.After(now) {
 				alreadyAdded := false
 				for _, existing := range upcomingFreeElectricitySessions {
-					if existing.Code == session.Code || (existing.StartAt.Equal(session.StartAt) && existing.EndAt.Equal(session.EndAt)) {
+					if (existing.Code != "" && existing.Code == session.Code) || (existing.StartAt.Equal(session.StartAt) && existing.EndAt.Equal(session.EndAt)) {
 						alreadyAdded = true
 						break
 					}
