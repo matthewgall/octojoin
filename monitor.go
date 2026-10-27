@@ -316,6 +316,10 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 		if event.Status != "UPCOMING" && !event.StartAt.After(now) {
 			continue
 		}
+		// Skip weekend happy hours (requires manual user slot selection, not saving sessions API)
+		if event.EventType == "WEEKEND_HAPPY_HOUR" {
+			continue
+		}
 		totalUpcomingFound++
 
 		session := SavingSession{
