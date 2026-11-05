@@ -196,3 +196,25 @@ func TestSavingSessionJSONSerialization(t *testing.T) {
 		t.Errorf("Expected json to contain '\"code\":\"EVENT_73_110926\"', got: %s", jsonStr)
 	}
 }
+
+func TestFreeElectricitySessionJSONSerialization(t *testing.T) {
+	session := FreeElectricitySession{
+		Code:    "EVENT_69_130926",
+		StartAt: time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC),
+		EndAt:   time.Date(2026, 9, 13, 11, 0, 0, 0, time.UTC),
+		Joined:  true,
+	}
+
+	data, err := json.Marshal(session)
+	if err != nil {
+		t.Fatalf("Failed to marshal free electricity session: %v", err)
+	}
+
+	jsonStr := string(data)
+	if !strings.Contains(jsonStr, `"joined":true`) {
+		t.Errorf("Expected json to contain '\"joined\":true', got: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"code":"EVENT_69_130926"`) {
+		t.Errorf("Expected json to contain '\"code\":\"EVENT_69_130926\"', got: %s", jsonStr)
+	}
+}

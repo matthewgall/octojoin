@@ -83,6 +83,7 @@ type SavingSessionEvent struct {
 	StartAt                  time.Time `json:"startAt"`
 	EndAt                    time.Time `json:"endAt"`
 	Status                   string    `json:"status"`
+	EventType                string    `json:"eventType"`
 	RewardPerKwhInOctoPoints int       `json:"rewardPerKwhInOctoPoints"`
 }
 
@@ -93,13 +94,14 @@ type SavingSession struct {
 	EndAt      time.Time `json:"endAt"`
 	OctoPoints int       `json:"octoPoints"`
 	Status     string    `json:"status,omitempty"`
-	Joined     bool      `json:"joined,omitempty"`
+	Joined     bool      `json:"joined"`
 }
 
 type FreeElectricitySession struct {
 	Code    string    `json:"code"`
 	StartAt time.Time `json:"start"`
 	EndAt   time.Time `json:"end"`
+	Joined  bool      `json:"joined"`
 }
 
 type FreeElectricitySessionsResponse struct {
@@ -684,11 +686,8 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 	c.debugLog("getOctoPointsGraphQLWithCache() returned %d points", points)
 
 	// Combine the data
-	result := &SavingSessionsResponse{}
-	result.Data.SavingSessions.Account.HasJoinedCampaign = savingSessions.Data.SavingSessions.Account.HasJoinedCampaign
-	result.Data.SavingSessions.Account.JoinedEvents = savingSessions.Data.SavingSessions.Account.JoinedEvents
-	result.Data.SavingSessions.Events = savingSessions.Data.SavingSessions.Events
-	result.Data.OctoPoints.Account.CurrentPointsInWallet = points
+	savingSessions.Data.OctoPoints.Account.CurrentPointsInWallet = points
+	result := savingSessions
 
 	// Update cache if state is provided
 	if state != nil {
@@ -721,6 +720,7 @@ func (c *OctopusClient) getSavingSessionsGraphQL() (*SavingSessionsResponse, err
 				startAt
 				endAt
 				status
+				eventType
 				rewardPerKwhInOctoPoints
 			}
 		}

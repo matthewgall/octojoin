@@ -313,7 +313,11 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 
 	for _, event := range response.Data.SavingSessions.Events {
 		// Only check upcoming events
-		if event.Status != "UPCOMING" && !event.StartAt.After(now) {
+		if event.Status != "UPCOMING" || !event.StartAt.After(now) {
+			continue
+		}
+		// Skip weekend happy hours (requires manual user slot selection, not saving sessions API)
+		if event.EventType == "WEEKEND_HAPPY_HOUR" {
 			continue
 		}
 		totalUpcomingFound++
@@ -381,7 +385,6 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 					}
 					joinedMap[session.EventID] = true
 				}
-				m.state.KnownSessions[session.EventID] = true
 			} else {
 				m.logger.Info("Skipped session - insufficient points",
 					"event_id", session.EventID,
@@ -389,8 +392,8 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 					"points", session.OctoPoints,
 					"threshold", m.minPointsThreshold,
 				)
-				m.state.KnownSessions[session.EventID] = true
 			}
+			m.state.KnownSessions[session.EventID] = true
 		}
 	}
 
@@ -564,7 +567,10 @@ func (m *SavingSessionMonitor) displayCampaignStatus() {
 }
 
 func (m *SavingSessionMonitor) shouldJoinSession(session SavingSession) bool {
-	return session.OctoPoints > 0 && session.OctoPoints >= m.minPointsThreshold
+	if session.OctoPoints == 0 {
+		return m.minPointsThreshold == 0
+	}
+	return session.OctoPoints >= m.minPointsThreshold
 }
 
 func (m *SavingSessionMonitor) joinSession(eventID int, eventCode string) error {
