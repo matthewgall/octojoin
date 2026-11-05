@@ -16,6 +16,7 @@ package main
 
 import (
 	"testing"
+	"time"
 )
 
 func TestShouldJoinSession(t *testing.T) {
@@ -75,6 +76,94 @@ func TestShouldJoinSession(t *testing.T) {
 			actual := m.shouldJoinSession(tc.session)
 			if actual != tc.expectedJoin {
 				t.Errorf("expected shouldJoinSession=%v, got %v", tc.expectedJoin, actual)
+			}
+		})
+	}
+}
+
+func TestGetSmartIntervalAt(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatalf("failed to load Europe/London timezone: %v", err)
+	}
+
+	tests := []struct {
+		name                 string
+		now                  time.Time
+		useSmartIntervals    bool
+		checkInterval        time.Duration
+		consecutiveEmptyChecks int
+		lastNewSessionTime   time.Time
+		expected             time.Duration
+	}{
+		{
+			name:              "smart intervals disabled uses configured check interval",
+			now:               time.Date(2026, 8, 6, 20, 0, 0, 0, loc),
+			useSmartIntervals: false,
+			checkInterval:     5 * time.Minute,
+			expected:          5 * time.Minute,
+		},
+		{
+			name:              "peak announcement window on weekday afternoon",
+			now:               time.Date(2026, 8, 6, 14, 30, 0, 0, loc),
+			useSmartIntervals: true,
+			expected:          IntervalPeakAnnouncement,
+		},
+		{
+			name:              "business hours on weekday morning",
+			now:               time.Date(2026, 8, 6, 9, 18, 0, 0, loc),
+			useSmartIntervals: true,
+			expected:          IntervalBusinessHours,
+		},
+		{
+			name:              "off-peak hours with no empty checks",
+			now:               time.Date(2026, 8, 9, 20, 0, 0, 0, loc), // Sunday
+			useSmartIntervals: true,
+			expected:          IntervalOffPeak,
+		},
+		{
+			name:                   "off-peak hours with consecutive empty checks extends interval",
+			now:                    time.Date(2026, 8, 9, 20, 0, 0, 0, loc), // Sunday
+			useSmartIntervals:      true,
+			consecutiveEmptyChecks: 2,
+			expected:               25 * time.Minute, // 15 + 2*5
+		},
+		{
+			name:                   "off-peak hours with many empty checks caps at off-peak interval",
+			now:                    time.Date(2026, 8, 9, 20, 0, 0, 0, loc), // Sunday
+			useSmartIntervals:      true,
+			consecutiveEmptyChecks: 100,
+			expected:               IntervalOffPeak,
+		},
+		{
+			name:              "recently found sessions overrides off-peak backoff",
+			now:               time.Date(2026, 8, 9, 20, 0, 0, 0, loc),
+			useSmartIntervals: true,
+			lastNewSessionTime: time.Date(2026, 8, 9, 19, 45, 0, 0, loc),
+			expected:          IntervalPeakAnnouncement,
+		},
+		{
+			name:              "recently found sessions overrides business hours",
+			now:               time.Date(2026, 8, 6, 9, 18, 0, 0, loc),
+			useSmartIntervals: true,
+			lastNewSessionTime: time.Date(2026, 8, 6, 9, 0, 0, 0, loc),
+			expected:          IntervalPeakAnnouncement,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &SavingSessionMonitor{
+				useSmartIntervals:      tc.useSmartIntervals,
+				checkInterval:          tc.checkInterval,
+				consecutiveEmptyChecks: tc.consecutiveEmptyChecks,
+				lastNewSessionTime:     tc.lastNewSessionTime,
+				logger:                 NewLogger(false),
+			}
+
+			actual := m.getSmartIntervalAt(tc.now)
+			if actual != tc.expected {
+				t.Errorf("expected interval %v, got %v", tc.expected, actual)
 			}
 		})
 	}

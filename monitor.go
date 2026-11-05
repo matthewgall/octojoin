@@ -95,33 +95,49 @@ func (m *SavingSessionMonitor) SetDaemonMode(enabled bool) {
 
 // getSmartInterval returns an intelligent check interval based on UK time and context
 func (m *SavingSessionMonitor) getSmartInterval() time.Duration {
+	return m.getSmartIntervalAt(time.Now())
+}
+
+// getSmartIntervalAt returns the smart interval for a specific point in time.
+// It is separated from getSmartInterval so the time can be injected in tests.
+func (m *SavingSessionMonitor) getSmartIntervalAt(now time.Time) time.Duration {
 	if !m.useSmartIntervals {
 		return m.checkInterval
 	}
-	
+
 	// Load UK timezone
 	ukLocation, err := time.LoadLocation("Europe/London")
 	if err != nil {
 		// Fallback to UTC if timezone loading fails
 		ukLocation = time.UTC
 	}
-	
-	now := time.Now().In(ukLocation)
+
+	now = now.In(ukLocation)
 	hour := now.Hour()
 	weekday := now.Weekday()
 
 	// Recently found new sessions - check more frequently for a batch
-	if !m.lastNewSessionTime.IsZero() && time.Since(m.lastNewSessionTime) < IntervalAfterNewSession {
+	if !m.lastNewSessionTime.IsZero() && now.Sub(m.lastNewSessionTime) < IntervalAfterNewSession {
+		m.logger.Info("Recent sessions found - checking frequently for potential batches",
+			"interval", m.formatDuration(IntervalPeakAnnouncement),
+			"since_last_session", m.formatDuration(now.Sub(m.lastNewSessionTime)),
+		)
 		return IntervalPeakAnnouncement
 	}
 
 	// Peak announcement window (2-4 PM UK time, weekdays)
 	if hour >= UKPeakAnnouncementStartHour && hour < UKPeakAnnouncementEndHour && weekday >= time.Monday && weekday <= time.Friday {
+		m.logger.Info("Peak announcement window - checking frequently",
+			"interval", m.formatDuration(IntervalPeakAnnouncement),
+		)
 		return IntervalPeakAnnouncement
 	}
 
 	// Business hours (9 AM - 6 PM, weekdays)
 	if hour >= UKBusinessHoursStartHour && hour < UKBusinessHoursEndHour && weekday >= time.Monday && weekday <= time.Friday {
+		m.logger.Info("Business hours - standard check interval",
+			"interval", m.formatDuration(IntervalBusinessHours),
+		)
 		return IntervalBusinessHours
 	}
 
@@ -133,10 +149,18 @@ func (m *SavingSessionMonitor) getSmartInterval() time.Duration {
 		if backoffMinutes > maxMinutes {
 			backoffMinutes = maxMinutes
 		}
-		return time.Duration(backoffMinutes) * time.Minute
+		interval := time.Duration(backoffMinutes) * time.Minute
+		m.logger.Info("No new sessions found - extending next interval",
+			"consecutive_empty_checks", m.consecutiveEmptyChecks,
+			"interval", m.formatDuration(interval),
+		)
+		return interval
 	}
 
 	// Off-peak hours (evenings, nights, weekends)
+	m.logger.Info("Off-peak hours - standard check interval",
+		"interval", m.formatDuration(IntervalOffPeak),
+	)
 	return IntervalOffPeak
 }
 
@@ -226,11 +250,6 @@ func (m *SavingSessionMonitor) checkForNewSessions() {
 		}
 	} else {
 		m.consecutiveEmptyChecks++
-		if m.useSmartIntervals && m.consecutiveEmptyChecks > 1 {
-			m.logger.Info("No new sessions found - extending next interval",
-				"consecutive_empty_checks", m.consecutiveEmptyChecks,
-			)
-		}
 	}
 
 	// Save state after checks
