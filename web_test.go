@@ -240,3 +240,54 @@ func TestHandleSessionsAPI(t *testing.T) {
 		t.Errorf("Expected CurrentPoints 850, got %d", resp.CurrentPoints)
 	}
 }
+
+func TestHandleHealth(t *testing.T) {
+	client := NewOctopusClient("A-TEST1234", "sk_test_12345", false)
+
+	monitor := &SavingSessionMonitor{
+		client: client,
+		state:  &AppState{},
+		logger: NewLogger(false),
+	}
+
+	ws := &WebServer{
+		monitor:   monitor,
+		logger:    NewLogger(false),
+		startTime: time.Now().Add(-5 * time.Second),
+	}
+
+	req := httptest.NewRequest("GET", "/api/health", nil)
+	rr := httptest.NewRecorder()
+
+	ws.handleHealth(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rr.Code)
+	}
+
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("Expected Content-Type application/json, got %s", contentType)
+	}
+
+	var resp HealthResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to decode health response JSON: %v", err)
+	}
+
+	if resp.Status != "healthy" {
+		t.Errorf("Expected status healthy, got %s", resp.Status)
+	}
+
+	if resp.Version == "" {
+		t.Errorf("Expected non-empty version")
+	}
+
+	if resp.Timestamp == 0 {
+		t.Errorf("Expected non-zero timestamp")
+	}
+
+	if resp.UptimeSeconds < 4 || resp.UptimeSeconds > 10 {
+		t.Errorf("Expected uptime around 5s, got %f", resp.UptimeSeconds)
+	}
+}

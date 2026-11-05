@@ -43,9 +43,17 @@ type SessionData struct {
 }
 
 type WebServer struct {
-	monitor *SavingSessionMonitor
-	server  *http.Server
-	logger  *Logger
+	monitor   *SavingSessionMonitor
+	server    *http.Server
+	logger    *Logger
+	startTime time.Time
+}
+
+type HealthResponse struct {
+	Status        string  `json:"status"`
+	Version       string  `json:"version"`
+	UptimeSeconds float64 `json:"uptime_seconds"`
+	Timestamp     int64   `json:"timestamp"`
 }
 
 func NewWebServer(monitor *SavingSessionMonitor, port int) *WebServer {
@@ -58,13 +66,15 @@ func NewWebServer(monitor *SavingSessionMonitor, port int) *WebServer {
 			Addr:    fmt.Sprintf(":%d", port),
 			Handler: mux,
 		},
-		logger: logger,
+		logger:    logger,
+		startTime: time.Now(),
 	}
 	
 	mux.HandleFunc("/", ws.handleDashboard)
 	mux.HandleFunc("/api/sessions", ws.handleSessionsAPI)
 	mux.HandleFunc("/api/usage", ws.handleUsageAPI)
 	mux.HandleFunc("/api/usage/refresh", ws.handleUsageRefreshAPI)
+	mux.HandleFunc("/api/health", ws.handleHealth)
 	
 	// Add Prometheus metrics endpoint
 	metricsCollector := NewMetricsCollector(monitor.client, monitor)
@@ -107,6 +117,22 @@ func (ws *WebServer) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return ws.server.Shutdown(ctx)
+}
+
+func (ws *WebServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	health := HealthResponse{
+		Status:        "healthy",
+		Version:       GetVersion(),
+		UptimeSeconds: time.Since(ws.startTime).Seconds(),
+		Timestamp:     time.Now().Unix(),
+	}
+
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(health); err != nil {
+		ws.logger.Error("Failed to encode health response", "error", err.Error())
+	}
 }
 
 func getCacheAge(cached *CachedUsageMeasurements) int {
