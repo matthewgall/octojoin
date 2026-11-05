@@ -15,6 +15,8 @@
 package main
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -164,5 +166,33 @@ func TestWheelOfFortuneSpins(t *testing.T) {
 
 	if spins.GasSpins != 2 {
 		t.Errorf("Expected 2 gas spins, got %d", spins.GasSpins)
+	}
+}
+
+func TestSavingSessionJSONSerialization(t *testing.T) {
+	session := SavingSession{
+		EventID:    6170,
+		Code:       "EVENT_73_110926",
+		StartAt:    time.Date(2026, 9, 11, 18, 0, 0, 0, time.UTC),
+		EndAt:      time.Date(2026, 9, 11, 19, 0, 0, 0, time.UTC),
+		OctoPoints: 76,
+		Status:     "UPCOMING",
+		Joined:     true,
+	}
+
+	data, err := json.Marshal(session)
+	if err != nil {
+		t.Fatalf("Failed to marshal session: %v", err)
+	}
+
+	jsonStr := string(data)
+	if !strings.Contains(jsonStr, `"octoPoints":76`) {
+		t.Errorf("Expected json to contain '\"octoPoints\":76', got: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"joined":true`) {
+		t.Errorf("Expected json to contain '\"joined\":true', got: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"code":"EVENT_73_110926"`) {
+		t.Errorf("Expected json to contain '\"code\":\"EVENT_73_110926\"', got: %s", jsonStr)
 	}
 }

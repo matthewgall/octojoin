@@ -126,21 +126,7 @@ func TestAppStateSave(t *testing.T) {
 
 func TestCachedSavingSessionsStruct(t *testing.T) {
 	now := time.Now()
-	testResponse := &SavingSessionsResponse{
-		Data: struct {
-			SavingSessions struct {
-				Account struct {
-					HasJoinedCampaign bool            `json:"hasJoinedCampaign"`
-					JoinedEvents      []SavingSession `json:"joinedEvents"`
-				} `json:"account"`
-			} `json:"savingSessions"`
-			OctoPoints struct {
-				Account struct {
-					CurrentPointsInWallet int `json:"currentPointsInWallet"`
-				} `json:"account"`
-			} `json:"octoPoints"`
-		}{},
-	}
+	testResponse := &SavingSessionsResponse{}
 
 	cached := CachedSavingSessions{
 		Data:      testResponse,

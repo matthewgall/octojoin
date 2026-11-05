@@ -135,11 +135,29 @@ func (ws *WebServer) handleSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	var upcomingSavingSessions []SavingSession
 	var upcomingFreeElectricitySessions []FreeElectricitySession
 	
-	// Filter saving sessions
+	// Filter saving sessions (show joined sessions, and any available upcoming sessions)
+	joinedMap := make(map[int]bool)
 	if sessions != nil && sessions.Data.SavingSessions.Account.JoinedEvents != nil {
 		for _, session := range sessions.Data.SavingSessions.Account.JoinedEvents {
+			joinedMap[session.EventID] = true
 			if session.EndAt.After(now) {
+				session.Joined = true
 				upcomingSavingSessions = append(upcomingSavingSessions, session)
+			}
+		}
+	}
+	if sessions != nil && sessions.Data.SavingSessions.Events != nil {
+		for _, event := range sessions.Data.SavingSessions.Events {
+			if event.EndAt.After(now) && !joinedMap[event.ID] {
+				upcomingSavingSessions = append(upcomingSavingSessions, SavingSession{
+					EventID:    event.ID,
+					Code:       event.Code,
+					StartAt:    event.StartAt,
+					EndAt:      event.EndAt,
+					OctoPoints: event.RewardPerKwhInOctoPoints,
+					Status:     event.Status,
+					Joined:     false,
+				})
 			}
 		}
 	}
@@ -809,11 +827,13 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
                     } else {
                         newSavingContent = data.saving_sessions.map(session => {
                             const duration = Math.floor((new Date(session.endAt) - new Date(session.startAt)) / (1000 * 60));
+                            const points = session.octoPoints !== undefined ? session.octoPoints : (session.octopoints !== undefined ? session.octopoints : 0);
+                            const joinedBadge = session.joined ? ' | <span style="color: #4ade80; font-weight: bold;">Joined</span>' : '';
                             return ` + "`" + `
                                 <div class="session">
                                     <div class="session-date">${formatDate(session.startAt)}</div>
                                     <div class="session-details">
-                                        Duration: ${formatDuration(duration)} | Points: ${session.octoPoints}
+                                        Duration: ${formatDuration(duration)} | Points: ${points} / kWh${joinedBadge}
                                     </div>
                                     <div class="session-countdown" data-target="${session.startAt}"></div>
                                 </div>

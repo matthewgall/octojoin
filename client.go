@@ -77,11 +77,23 @@ type OctopusClient struct {
 	metrics        *APIMetrics
 }
 
+type SavingSessionEvent struct {
+	ID                       int       `json:"id"`
+	Code                     string    `json:"code"`
+	StartAt                  time.Time `json:"startAt"`
+	EndAt                    time.Time `json:"endAt"`
+	Status                   string    `json:"status"`
+	RewardPerKwhInOctoPoints int       `json:"rewardPerKwhInOctoPoints"`
+}
+
 type SavingSession struct {
 	EventID    int       `json:"eventId"`
+	Code       string    `json:"code,omitempty"`
 	StartAt    time.Time `json:"startAt"`
 	EndAt      time.Time `json:"endAt"`
-	OctoPoints int       `json:"octopoints"`
+	OctoPoints int       `json:"octoPoints"`
+	Status     string    `json:"status,omitempty"`
+	Joined     bool      `json:"joined,omitempty"`
 }
 
 type FreeElectricitySession struct {
@@ -121,6 +133,7 @@ type SavingSessionsResponse struct {
 				HasJoinedCampaign bool            `json:"hasJoinedCampaign"`
 				JoinedEvents      []SavingSession `json:"joinedEvents"`
 			} `json:"account"`
+			Events []SavingSessionEvent `json:"events"`
 		} `json:"savingSessions"`
 		OctoPoints struct {
 			Account struct {
@@ -655,8 +668,8 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 		}
 	}
 
-	// Get saving sessions from REST API
-	savingSessions, err := c.getSavingSessionsREST()
+	// Get saving sessions from backend-graphql API
+	savingSessions, err := c.getSavingSessionsGraphQL()
 	if err != nil {
 		return nil, err
 	}
@@ -670,59 +683,12 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 	}
 	c.debugLog("getOctoPointsGraphQLWithCache() returned %d points", points)
 
-	// Get campaign enrollment status via GraphQL (with caching)
-	campaigns, err := c.getCampaignStatusWithCache(state)
-	var hasJoinedCampaign bool
-	if err != nil {
-		c.logger.Warn("Failed to get campaign status", "error", err)
-		hasJoinedCampaign = false // Default to false if GraphQL fails
-	} else {
-		hasJoinedCampaign = campaigns["octoplus-saving-sessions"]
-	}
-	c.debugLog("Campaign enrollment status: %v", hasJoinedCampaign)
-
 	// Combine the data
-	result := &SavingSessionsResponse{
-		Data: struct {
-			SavingSessions struct {
-				Account struct {
-					HasJoinedCampaign bool             `json:"hasJoinedCampaign"`
-					JoinedEvents      []SavingSession  `json:"joinedEvents"`
-				} `json:"account"`
-			} `json:"savingSessions"`
-			OctoPoints struct {
-				Account struct {
-					CurrentPointsInWallet int `json:"currentPointsInWallet"`
-				} `json:"account"`
-			} `json:"octoPoints"`
-		}{
-			SavingSessions: struct {
-				Account struct {
-					HasJoinedCampaign bool             `json:"hasJoinedCampaign"`
-					JoinedEvents      []SavingSession  `json:"joinedEvents"`
-				} `json:"account"`
-			}{
-				Account: struct {
-					HasJoinedCampaign bool             `json:"hasJoinedCampaign"`
-					JoinedEvents      []SavingSession  `json:"joinedEvents"`
-				}{
-					HasJoinedCampaign: hasJoinedCampaign,
-					JoinedEvents:      savingSessions.Data.SavingSessions.Account.JoinedEvents,
-				},
-			},
-			OctoPoints: struct {
-				Account struct {
-					CurrentPointsInWallet int `json:"currentPointsInWallet"`
-				} `json:"account"`
-			}{
-				Account: struct {
-					CurrentPointsInWallet int `json:"currentPointsInWallet"`
-				}{
-					CurrentPointsInWallet: points,
-				},
-			},
-		},
-	}
+	result := &SavingSessionsResponse{}
+	result.Data.SavingSessions.Account.HasJoinedCampaign = savingSessions.Data.SavingSessions.Account.HasJoinedCampaign
+	result.Data.SavingSessions.Account.JoinedEvents = savingSessions.Data.SavingSessions.Account.JoinedEvents
+	result.Data.SavingSessions.Events = savingSessions.Data.SavingSessions.Events
+	result.Data.OctoPoints.Account.CurrentPointsInWallet = points
 
 	// Update cache if state is provided
 	if state != nil {
@@ -735,25 +701,100 @@ func (c *OctopusClient) GetSavingSessionsWithCache(state *AppState) (*SavingSess
 	return result, nil
 }
 
-func (c *OctopusClient) getSavingSessionsREST() (*SavingSessionsResponse, error) {
-	endpoint := fmt.Sprintf("/accounts/%s/", c.AccountID)
-	
-	resp, err := c.makeRequest("GET", endpoint, nil)
+func (c *OctopusClient) getSavingSessionsGraphQL() (*SavingSessionsResponse, error) {
+	c.debugLog("Requesting saving sessions from backend-graphql...")
+
+	query := `query getSavingSessions($accountNumber: String!) {
+		savingSessions {
+			account(accountNumber: $accountNumber) {
+				hasJoinedCampaign
+				joinedEvents {
+					eventId
+					startAt
+					endAt
+					eventStatus
+				}
+			}
+			events {
+				id
+				code
+				startAt
+				endAt
+				status
+				rewardPerKwhInOctoPoints
+			}
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"accountNumber": c.AccountID,
+	}
+
+	resp, err := c.makeGraphQLRequestWithEndpoint(getEndpoint("backend-graphql"), query, variables, true, "getSavingSessions")
 	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
+		return nil, fmt.Errorf("failed to execute saving sessions request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
+		return nil, fmt.Errorf("saving sessions request failed with status %d", resp.StatusCode)
 	}
 
-	var result SavingSessionsResponse
+	var result struct {
+		Data struct {
+			SavingSessions struct {
+				Account struct {
+					HasJoinedCampaign bool `json:"hasJoinedCampaign"`
+					JoinedEvents      []struct {
+						EventID     int       `json:"eventId"`
+						StartAt     time.Time `json:"startAt"`
+						EndAt       time.Time `json:"endAt"`
+						EventStatus string    `json:"eventStatus"`
+					} `json:"joinedEvents"`
+				} `json:"account"`
+				Events []SavingSessionEvent `json:"events"`
+			} `json:"savingSessions"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("failed to decode saving sessions response: %w", err)
 	}
 
-	return &result, nil
+	if len(result.Errors) > 0 {
+		errorMessages := make([]string, len(result.Errors))
+		for i, err := range result.Errors {
+			errorMessages[i] = err.Message
+		}
+		return nil, fmt.Errorf("saving sessions GraphQL errors: %s", strings.Join(errorMessages, ", "))
+	}
+
+	var respModel SavingSessionsResponse
+	respModel.Data.SavingSessions.Account.HasJoinedCampaign = result.Data.SavingSessions.Account.HasJoinedCampaign
+	respModel.Data.SavingSessions.Events = result.Data.SavingSessions.Events
+
+	eventMap := make(map[int]SavingSessionEvent)
+	for _, e := range result.Data.SavingSessions.Events {
+		eventMap[e.ID] = e
+	}
+
+	for _, j := range result.Data.SavingSessions.Account.JoinedEvents {
+		ev := eventMap[j.EventID]
+		respModel.Data.SavingSessions.Account.JoinedEvents = append(respModel.Data.SavingSessions.Account.JoinedEvents, SavingSession{
+			EventID:    j.EventID,
+			Code:       ev.Code,
+			StartAt:    j.StartAt,
+			EndAt:      j.EndAt,
+			OctoPoints: ev.RewardPerKwhInOctoPoints,
+			Status:     j.EventStatus,
+			Joined:     true,
+		})
+	}
+
+	return &respModel, nil
 }
 
 func (c *OctopusClient) refreshJWTToken() error {
@@ -951,7 +992,7 @@ func (c *OctopusClient) getOctoPointsGraphQL() (int, error) {
 		c.debugLog("  - %s", campaign.Slug)
 	}
 
-	// Get the current balance (should be the first/latest entry)
+	// Get the current balance (first/newest entry in reverse-chronological ledger)
 	if len(result.Data.LoyaltyPointLedgers) > 0 {
 		pointsStr := result.Data.LoyaltyPointLedgers[0].BalanceCarriedForward
 		points, err := strconv.Atoi(pointsStr)
@@ -1032,17 +1073,65 @@ func (c *OctopusClient) GetFreeElectricitySessionsWithCache(state *AppState) (*F
 	return nil, fmt.Errorf("all free electricity endpoints failed, last error: %w", lastErr)
 }
 
-func (c *OctopusClient) JoinSavingSession(eventID int) error {
-	endpoint := fmt.Sprintf("/accounts/%s/saving-sessions/%d/join", c.AccountID, eventID)
-	
-	resp, err := c.makeRequest("POST", endpoint, nil)
+func (c *OctopusClient) JoinSavingSession(eventID int, eventCode string) error {
+	c.debugLog("Joining saving session with eventCode: %s, eventID: %d", eventCode, eventID)
+
+	mutation := `mutation joinSavingSessionsEvent($input: JoinSavingSessionsEventInput!) {
+		joinSavingSessionsEvent(input: $input) {
+			joinedEventCodes
+		}
+	}`
+
+	variables := map[string]interface{}{
+		"input": map[string]interface{}{
+			"accountNumber": c.AccountID,
+			"eventCode":     eventCode,
+		},
+	}
+
+	resp, err := c.makeGraphQLRequestWithEndpoint(getEndpoint("backend-graphql"), mutation, variables, true, "joinSavingSessionsEvent")
 	if err != nil {
-		return fmt.Errorf("failed to join saving session: %w", err)
+		return fmt.Errorf("failed to execute join saving session mutation: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("failed to join saving session, status: %d", resp.StatusCode)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read join response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("join saving session failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Data struct {
+			JoinSavingSessionsEvent struct {
+				JoinedEventCodes []string `json:"joinedEventCodes"`
+			} `json:"joinSavingSessionsEvent"`
+		} `json:"data"`
+		Errors []struct {
+			Message    string `json:"message"`
+			Extensions struct {
+				ErrorCode string `json:"errorCode"`
+				Reason    string `json:"reason"`
+			} `json:"extensions"`
+		} `json:"errors"`
+	}
+
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return fmt.Errorf("failed to decode join response: %w (body: %s)", err, string(bodyBytes))
+	}
+
+	if len(result.Errors) > 0 {
+		for _, e := range result.Errors {
+			if strings.Contains(strings.ToLower(e.Extensions.Reason), "already signed up") ||
+				strings.Contains(strings.ToLower(e.Message), "already signed up") {
+				c.logger.Info("Already signed up to saving session", "event_code", eventCode)
+				return nil
+			}
+		}
+		return fmt.Errorf("GraphQL error: %s", result.Errors[0].Message)
 	}
 
 	return nil

@@ -302,70 +302,99 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 		}
 	}
 
+	// Track which events are already joined
+	joinedMap := make(map[int]bool)
 	for _, session := range response.Data.SavingSessions.Account.JoinedEvents {
+		joinedMap[session.EventID] = true
+	}
+
+	totalUpcomingFound := 0
+	now := time.Now()
+
+	for _, event := range response.Data.SavingSessions.Events {
+		// Only check upcoming events
+		if event.Status != "UPCOMING" && !event.StartAt.After(now) {
+			continue
+		}
+		totalUpcomingFound++
+
+		session := SavingSession{
+			EventID:    event.ID,
+			Code:       event.Code,
+			StartAt:    event.StartAt,
+			EndAt:      event.EndAt,
+			OctoPoints: event.RewardPerKwhInOctoPoints,
+			Status:     event.Status,
+		}
+
+		if joinedMap[event.ID] {
+			// Already joined this session
+			m.state.KnownSessions[event.ID] = true
+			continue
+		}
+
 		if !m.state.KnownSessions[session.EventID] {
 			foundNewSessions = true
-			now := time.Now()
 			duration := session.EndAt.Sub(session.StartAt)
+			timeUntil := session.StartAt.Sub(now)
 
-			if session.StartAt.After(now) {
-				// Upcoming session
-				timeUntil := session.StartAt.Sub(now)
+			if m.daemonMode {
+				m.logger.Info("SAVING SESSION FOUND",
+					"event_id", session.EventID,
+					"event_code", session.Code,
+					"date", session.StartAt.Format("Monday, Jan 2"),
+					"time", session.StartAt.Format("15:04"),
+					"duration", m.formatDuration(duration),
+					"reward_points", session.OctoPoints,
+					"starts_in", m.formatTimeUntil(timeUntil),
+				)
+			} else {
+				m.logger.UserMessage("🎉 SAVING SESSION FOUND")
+				m.logger.UserMessage("   Event: %s (ID: %d)", session.Code, session.EventID)
+				m.logger.UserMessage("   Date: %s at %s", session.StartAt.Format("Monday, Jan 2"), session.StartAt.Format("15:04"))
+				m.logger.UserMessage("   Duration: %s", m.formatDuration(duration))
+				m.logger.UserMessage("   Reward: %d OctoPoints / kWh", session.OctoPoints)
+				m.logger.UserMessage("   Starts in %s", m.formatTimeUntil(timeUntil))
+			}
 
-				// Use user-friendly output in standalone mode, structured logging in daemon mode
+			if m.shouldJoinSession(session) {
 				if m.daemonMode {
-					m.logger.Info("SAVING SESSION FOUND",
+					m.logger.Info("Attempting to join session",
 						"event_id", session.EventID,
-						"date", session.StartAt.Format("Monday, Jan 2"),
-						"time", session.StartAt.Format("15:04"),
-						"duration", m.formatDuration(duration),
-						"reward_points", session.OctoPoints,
-						"starts_in", m.formatTimeUntil(timeUntil),
-					)
-				} else {
-					m.logger.UserMessage("🎉 SAVING SESSION FOUND")
-					m.logger.UserMessage("   Date: %s at %s", session.StartAt.Format("Monday, Jan 2"), session.StartAt.Format("15:04"))
-					m.logger.UserMessage("   Duration: %s", m.formatDuration(duration))
-					m.logger.UserMessage("   Reward: %d OctoPoints", session.OctoPoints)
-					m.logger.UserMessage("   Starts in %s", m.formatTimeUntil(timeUntil))
-				}
-
-				if m.shouldJoinSession(session) {
-					if m.daemonMode {
-						m.logger.Info("Attempting to join session",
-							"event_id", session.EventID,
-							"points", session.OctoPoints,
-							"threshold", m.minPointsThreshold,
-						)
-					} else {
-						m.logger.UserMessage("   Joining session (meets threshold of %d points)", m.minPointsThreshold)
-					}
-					if err := m.joinSession(session.EventID); err != nil {
-						m.logger.Error("Failed to join session",
-							"event_id", session.EventID,
-							"error", err.Error(),
-						)
-					} else {
-						m.logger.Info("Successfully joined session", "event_id", session.EventID)
-					}
-				} else {
-					m.logger.Info("Skipped session - insufficient points",
-						"event_id", session.EventID,
+						"event_code", session.Code,
 						"points", session.OctoPoints,
 						"threshold", m.minPointsThreshold,
 					)
+				} else {
+					m.logger.UserMessage("   Joining session (meets threshold of %d points)", m.minPointsThreshold)
 				}
+				if err := m.joinSession(session.EventID, session.Code); err != nil {
+					m.logger.Error("Failed to join session",
+						"event_id", session.EventID,
+						"event_code", session.Code,
+						"error", err.Error(),
+					)
+				} else {
+					m.logger.Info("Successfully joined session", "event_id", session.EventID, "event_code", session.Code)
+					if !m.daemonMode {
+						m.logger.UserMessage("   ✅ Successfully joined session!")
+					}
+					joinedMap[session.EventID] = true
+				}
+				m.state.KnownSessions[session.EventID] = true
 			} else {
-				m.logger.Debug("Saving session already started/ended",
+				m.logger.Info("Skipped session - insufficient points",
 					"event_id", session.EventID,
+					"event_code", session.Code,
+					"points", session.OctoPoints,
+					"threshold", m.minPointsThreshold,
 				)
+				m.state.KnownSessions[session.EventID] = true
 			}
-
-			m.state.KnownSessions[session.EventID] = true
 		}
 	}
 
-	if len(response.Data.SavingSessions.Account.JoinedEvents) == 0 {
+	if totalUpcomingFound == 0 {
 		m.logger.Debug("No saving sessions found")
 	}
 	
@@ -535,11 +564,11 @@ func (m *SavingSessionMonitor) displayCampaignStatus() {
 }
 
 func (m *SavingSessionMonitor) shouldJoinSession(session SavingSession) bool {
-	return session.OctoPoints >= m.minPointsThreshold
+	return session.OctoPoints > 0 && session.OctoPoints >= m.minPointsThreshold
 }
 
-func (m *SavingSessionMonitor) joinSession(eventID int) error {
-	return m.client.JoinSavingSession(eventID)
+func (m *SavingSessionMonitor) joinSession(eventID int, eventCode string) error {
+	return m.client.JoinSavingSession(eventID, eventCode)
 }
 
 func (m *SavingSessionMonitor) formatDuration(d time.Duration) string {
