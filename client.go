@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -71,10 +72,18 @@ type OctopusClient struct {
 	maxRetries      int
 	jwtToken       string
 	jwtExpiry      time.Time
-	debug          bool
-	state          *AppState
-	logger         *Logger
-	metrics        *APIMetrics
+	// Token refresh backoff state. Token retrieval is rate limited per
+	// account, so after a failure we wait before the next attempt, doubling
+	// the wait after each consecutive failure up to tokenBackoffMax.
+	tokenRefreshFailures int
+	tokenBackoffUntil    time.Time
+	tokenBackoffBase     time.Duration
+	tokenBackoffMax      time.Duration
+	krakenTokenURL       string // Overridable for tests
+	debug                bool
+	state                *AppState
+	logger               *Logger
+	metrics              *APIMetrics
 }
 
 type SavingSessionEvent struct {
@@ -222,6 +231,9 @@ func NewOctopusClient(accountID, apiKey string, debug bool) *OctopusClient {
 		BaseURL:     getEndpoint("api"),
 		minInterval: HTTPMinInterval,
 		maxRetries:  HTTPMaxRetries,
+		tokenBackoffBase: TokenRefreshBackoffBase,
+		tokenBackoffMax:  TokenRefreshBackoffMax,
+		krakenTokenURL:   "https://api.octopus.energy/v1/graphql/",
 		debug:       debug,
 		logger:      logger,
 		metrics:     NewAPIMetrics(),
@@ -234,6 +246,33 @@ func NewOctopusClient(accountID, apiKey string, debug bool) *OctopusClient {
 func (c *OctopusClient) SetState(state *AppState) {
 	c.state = state
 	c.loadJWTFromState()
+}
+
+// jwtExpiryFromToken decodes the exp claim from a JWT without verifying the
+// signature. The expiry is provided by the issuing server in the token
+// itself; we only need it to know when to proactively refresh.
+func jwtExpiryFromToken(token string) (time.Time, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, fmt.Errorf("token is not a JWT")
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to base64-decode JWT payload: %w", err)
+	}
+
+	var claims struct {
+		Exp *int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse JWT payload: %w", err)
+	}
+	if claims.Exp == nil {
+		return time.Time{}, fmt.Errorf("JWT payload has no exp claim")
+	}
+
+	return time.Unix(*claims.Exp, 0), nil
 }
 
 func (c *OctopusClient) loadJWTFromState() {
@@ -250,6 +289,38 @@ func (c *OctopusClient) saveJWTToState() {
 		c.state.JWTTokenExpiry = c.jwtExpiry
 		c.debugLog("Saved JWT token to state, expires: %v", c.jwtExpiry)
 	}
+}
+
+// isAuthExpiredMessage reports whether a GraphQL response body indicates the
+// JWT/Authorization credential is expired or invalid. Octopus returns several
+// different phrasings depending on the endpoint, so all known variants are
+// matched. Checks are case-insensitive on the body.
+func isAuthExpiredMessage(body string) bool {
+	lower := strings.ToLower(body)
+
+	// Octopus-specific auth error codes (checked on the raw body, they are
+	// case-sensitive identifiers)
+	if strings.Contains(body, OctopusErrorCodeJWTExpired) ||
+		strings.Contains(body, OctopusErrorCodeInvalidAuth) {
+		return true
+	}
+
+	// Known expiration/invalidation phrasings observed from the Octopus APIs
+	phrases := []string{
+		"signature of the jwt has expired",
+		"jwt has expired",
+		"token has expired",
+		"'authorization' header has expired", // returned by backend GraphQL API
+		"authorization header has expired",    // without quotes, defensive variant
+		"authentication failed",
+	}
+	for _, phrase := range phrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *OctopusClient) invalidateJWTToken() {
@@ -335,12 +406,7 @@ func (c *OctopusClient) makeGraphQLRequestWithEndpoint(endpoint, query string, v
 
 		// Check if the response contains JWT expiration error
 		bodyStr := string(bodyBytes)
-		if strings.Contains(bodyStr, "Signature of the JWT has expired") ||
-		   strings.Contains(bodyStr, "JWT has expired") ||
-		   strings.Contains(bodyStr, "Token has expired") ||
-		   strings.Contains(bodyStr, OctopusErrorCodeJWTExpired) || // Octopus specific auth error code
-		   strings.Contains(bodyStr, OctopusErrorCodeInvalidAuth) || // Invalid authorization header error
-		   strings.Contains(bodyStr, "Authentication failed") {
+		if isAuthExpiredMessage(bodyStr) {
 			c.debugLog("GraphQL response contains JWT expiration/auth error. Invalidating token and retrying...")
 			c.debugLog("Error details: %s", bodyStr)
 			c.invalidateJWTToken()
@@ -804,11 +870,70 @@ func (c *OctopusClient) refreshJWTToken() error {
 		return nil // Token still valid
 	}
 
+	// Token retrieval is rate limited per account. If a recent token request
+	// failed, wait before attempting another (see recordTokenRefreshFailure)
+	// instead of retrying on every request and keeping the limit tripped.
+	if wait := time.Until(c.tokenBackoffUntil); wait > 0 {
+		return fmt.Errorf("JWT token refresh in backoff for another %v", wait.Round(time.Second))
+	}
+
 	c.debugLog("Requesting new JWT token...")
 
-	// JWT token request endpoint
-	tokenURL := "https://api.octopus.energy/v1/graphql/"
+	token, refreshExpiresIn, err := c.obtainKrakenToken()
+	if err != nil {
+		c.recordTokenRefreshFailure(err)
+		return err
+	}
+
+	// A successful refresh clears the backoff state
+	c.tokenRefreshFailures = 0
+	c.tokenBackoffUntil = time.Time{}
+
+	c.jwtToken = token
+
+	// Prefer the access token's own exp claim. refreshExpiresIn is the
+	// lifetime of the refresh token (days), not the access token (hours);
+	// using it made the proactive refresh think a long-expired JWT was
+	// still valid.
+	jwtExpiry, err := jwtExpiryFromToken(c.jwtToken)
+	if err != nil {
+		c.debugLog("Could not decode JWT exp claim (%v), falling back to refreshExpiresIn", err)
+		jwtExpiry = time.Now().Add(time.Duration(refreshExpiresIn) * time.Second)
+	}
+	c.jwtExpiry = jwtExpiry
+
+	c.debugLog("JWT token obtained successfully, expires: %v", c.jwtExpiry)
 	
+	// Save token to persistent state
+	c.saveJWTToState()
+
+	return nil
+}
+
+// recordTokenRefreshFailure updates the token refresh backoff after a failed
+// token request. The wait doubles after each consecutive failure up to
+// tokenBackoffMax, mirroring the Octopus Energy Home Assistant integration's
+// handling of the per-account token rate limit.
+func (c *OctopusClient) recordTokenRefreshFailure(err error) {
+	c.tokenRefreshFailures++
+
+	backoff := c.tokenBackoffBase
+	for i := 1; i < c.tokenRefreshFailures; i++ {
+		backoff *= 2
+		if backoff > c.tokenBackoffMax {
+			backoff = c.tokenBackoffMax
+			break
+		}
+	}
+
+	c.tokenBackoffUntil = time.Now().Add(backoff)
+	c.debugLog("Token refresh failed (attempt %d): %v. Next attempt in %v", c.tokenRefreshFailures, err, backoff)
+}
+
+// obtainKrakenToken makes a single request for a fresh Kraken JWT token.
+// Rate-limit handling is the caller's responsibility via the backoff state
+// managed by refreshJWTToken/recordTokenRefreshFailure.
+func (c *OctopusClient) obtainKrakenToken() (string, int, error) {
 	// Query to get JWT token using API key
 	query := `mutation obtainKrakenToken($input: ObtainJSONWebTokenInput!) {
 		obtainKrakenToken(input: $input) {
@@ -829,14 +954,14 @@ func (c *OctopusClient) refreshJWTToken() error {
 
 	reqBody, err := json.Marshal(requestBody)
 	if err != nil {
-		return fmt.Errorf("failed to marshal token request: %w", err)
+		return "", 0, fmt.Errorf("failed to marshal token request: %w", err)
 	}
 
 	c.debugLog("Token request body: %s", string(reqBody))
 
-	req, err := http.NewRequest("POST", tokenURL, bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest("POST", c.krakenTokenURL, bytes.NewReader(reqBody))
 	if err != nil {
-		return fmt.Errorf("failed to create token request: %w", err)
+		return "", 0, fmt.Errorf("failed to create token request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -844,7 +969,7 @@ func (c *OctopusClient) refreshJWTToken() error {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to execute token request: %w", err)
+		return "", 0, fmt.Errorf("failed to execute token request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -854,7 +979,7 @@ func (c *OctopusClient) refreshJWTToken() error {
 		// Read body for error details
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		c.debugLog("Token request failed body: %s", string(bodyBytes))
-		return fmt.Errorf("token request failed with status %d", resp.StatusCode)
+		return "", 0, fmt.Errorf("token request failed with status %d", resp.StatusCode)
 	}
 
 	var tokenResult struct {
@@ -871,27 +996,19 @@ func (c *OctopusClient) refreshJWTToken() error {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResult); err != nil {
-		return fmt.Errorf("failed to decode token response: %w", err)
+		return "", 0, fmt.Errorf("failed to decode token response: %w", err)
 	}
 
 	if len(tokenResult.Errors) > 0 {
-		c.debugLog("GraphQL errors: %v", tokenResult.Errors)
-		return fmt.Errorf("GraphQL errors: %s", tokenResult.Errors[0].Message)
+		c.debugLog("Token request GraphQL errors: %v", tokenResult.Errors)
+		return "", 0, fmt.Errorf("GraphQL errors: %s", tokenResult.Errors[0].Message)
 	}
 
 	if tokenResult.Data.ObtainKrakenToken.Token == "" {
-		return fmt.Errorf("empty token received")
+		return "", 0, fmt.Errorf("empty token received")
 	}
 
-	c.jwtToken = tokenResult.Data.ObtainKrakenToken.Token
-	c.jwtExpiry = time.Now().Add(time.Duration(tokenResult.Data.ObtainKrakenToken.RefreshExpiresIn) * time.Second)
-
-	c.debugLog("JWT token obtained successfully, expires: %v", c.jwtExpiry)
-	
-	// Save token to persistent state
-	c.saveJWTToState()
-
-	return nil
+	return tokenResult.Data.ObtainKrakenToken.Token, tokenResult.Data.ObtainKrakenToken.RefreshExpiresIn, nil
 }
 
 func (c *OctopusClient) getOctoPointsGraphQLWithCache(state *AppState) (int, error) {

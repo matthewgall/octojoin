@@ -74,6 +74,16 @@ const (
 const (
 	// JWTRefreshBuffer - Refresh JWT tokens this many minutes before expiry
 	JWTRefreshBuffer = 5 * time.Minute
+
+	// TokenRefreshBackoffBase - Wait before retrying after a failed token
+	// request. Token retrieval is rate limited per account, so retrying on
+	// every request keeps the limit tripped (same approach as the official
+	// Octopus Energy Home Assistant integration).
+	TokenRefreshBackoffBase = 1 * time.Minute
+
+	// TokenRefreshBackoffMax - Maximum token refresh backoff after repeated
+	// consecutive failures.
+	TokenRefreshBackoffMax = 30 * time.Minute
 )
 
 // HTTP client settings
