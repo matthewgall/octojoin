@@ -258,6 +258,18 @@ func (m *SavingSessionMonitor) checkForNewSessions() {
 	}
 }
 
+// canSpinWheelOfFortune returns whether the account is enrolled in the
+// octoplus campaign, which is required for Wheel of Fortune spins to credit
+// OctoPoints. On error it returns true so existing behaviour is preserved
+// when campaign status cannot be determined.
+func (m *SavingSessionMonitor) canSpinWheelOfFortune() (bool, error) {
+	campaigns, err := m.client.getCampaignStatusWithCache(m.state)
+	if err != nil {
+		return true, err
+	}
+	return campaigns["octoplus"], nil
+}
+
 func (m *SavingSessionMonitor) checkSavingSessions() bool {
 	response, err := m.client.GetSavingSessionsWithCache(m.state)
 	if err != nil {
@@ -271,53 +283,62 @@ func (m *SavingSessionMonitor) checkSavingSessions() bool {
 		"points", response.Data.OctoPoints.Account.CurrentPointsInWallet,
 	)
 
-	// Get and display Wheel of Fortune spins (with caching)
-	spins, err := m.client.getWheelOfFortuneSpinsWithCache(m.state)
+	// Only attempt Wheel of Fortune if the account is enrolled in OctoPlus
+	canSpin, err := m.canSpinWheelOfFortune()
 	if err != nil {
-		m.logger.Warn("Could not get Wheel of Fortune spins", "error", err.Error())
+		m.logger.Debug("Could not verify octoplus status, allowing wheel spin attempt", "error", err.Error())
+	}
+	if !canSpin {
+		m.logger.Debug("Skipping Wheel of Fortune spins - octoplus campaign not enabled")
 	} else {
-		totalSpins := spins.ElectricitySpins + spins.GasSpins
-		if totalSpins > 0 {
-			m.logger.Info("Wheel of Fortune spins available",
-				"total", totalSpins,
-				"electricity", spins.ElectricitySpins,
-				"gas", spins.GasSpins,
-			)
-
-			// Auto-spin all available wheels
-			m.logger.Info("Auto-spinning all available wheels")
-			results, err := m.client.spinAllAvailableWheels(spins)
-			if err != nil {
-				m.logger.Error("Error during auto-spinning", "error", err.Error())
-			} else if len(results) > 0 {
-				totalPoints := 0
-				electricityPoints := 0
-				gasPoints := 0
-
-				for _, result := range results {
-					totalPoints += result.Prize
-					if result.FuelType == "ELECTRICITY" {
-						electricityPoints += result.Prize
-					} else {
-						gasPoints += result.Prize
-					}
-				}
-
-				m.logger.Info("Auto-spin complete",
-					"total_points", totalPoints,
-					"electricity_points", electricityPoints,
-					"gas_points", gasPoints,
+		// Get and display Wheel of Fortune spins (with caching)
+		spins, err := m.client.getWheelOfFortuneSpinsWithCache(m.state)
+		if err != nil {
+			m.logger.Warn("Could not get Wheel of Fortune spins", "error", err.Error())
+		} else {
+			totalSpins := spins.ElectricitySpins + spins.GasSpins
+			if totalSpins > 0 {
+				m.logger.Info("Wheel of Fortune spins available",
+					"total", totalSpins,
+					"electricity", spins.ElectricitySpins,
+					"gas", spins.GasSpins,
 				)
-				
-				// Clear the cached spins so we check for new ones on next run
-				if m.state != nil {
-					m.state.CachedWheelOfFortuneSpins = nil
+
+				// Auto-spin all available wheels
+				m.logger.Info("Auto-spinning all available wheels")
+				results, err := m.client.spinAllAvailableWheels(spins)
+				if err != nil {
+					m.logger.Error("Error during auto-spinning", "error", err.Error())
+				} else if len(results) > 0 {
+					totalPoints := 0
+					electricityPoints := 0
+					gasPoints := 0
+
+					for _, result := range results {
+						totalPoints += result.Prize
+						if result.FuelType == "ELECTRICITY" {
+							electricityPoints += result.Prize
+						} else {
+							gasPoints += result.Prize
+						}
+					}
+
+					m.logger.Info("Auto-spin complete",
+						"total_points", totalPoints,
+						"electricity_points", electricityPoints,
+						"gas_points", gasPoints,
+					)
+
+					// Clear the cached spins so we check for new ones on next run
+					if m.state != nil {
+						m.state.CachedWheelOfFortuneSpins = nil
+					}
+				} else {
+					m.logger.Warn("No wheels were successfully spun")
 				}
 			} else {
-				m.logger.Warn("No wheels were successfully spun")
+				m.logger.Debug("No Wheel of Fortune spins available")
 			}
-		} else {
-			m.logger.Debug("No Wheel of Fortune spins available")
 		}
 	}
 

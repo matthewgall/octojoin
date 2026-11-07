@@ -168,3 +168,80 @@ func TestGetSmartIntervalAt(t *testing.T) {
 		})
 	}
 }
+
+func TestCanSpinWheelOfFortune(t *testing.T) {
+	now := time.Now()
+	client := NewOctopusClient("A-TEST1234", "sk_test_12345", false)
+
+	tests := []struct {
+		name           string
+		cachedCampaign *CachedCampaignStatus
+		wantCanSpin    bool
+		wantErr        bool
+	}{
+		{
+			name: "octoplus enabled allows spinning",
+			cachedCampaign: &CachedCampaignStatus{
+				Timestamp: now,
+				Data: map[string]bool{
+					"octoplus":                 true,
+					"octoplus-saving-sessions": true,
+				},
+			},
+			wantCanSpin: true,
+			wantErr:     false,
+		},
+		{
+			name: "octoplus disabled blocks spinning",
+			cachedCampaign: &CachedCampaignStatus{
+				Timestamp: now,
+				Data: map[string]bool{
+					"octoplus":                 false,
+					"octoplus-saving-sessions": true,
+				},
+			},
+			wantCanSpin: false,
+			wantErr:     false,
+		},
+		{
+			name: "missing octoplus key defaults to false",
+			cachedCampaign: &CachedCampaignStatus{
+				Timestamp: now,
+				Data: map[string]bool{
+					"octoplus-saving-sessions": true,
+				},
+			},
+			wantCanSpin: false,
+			wantErr:     false,
+		},
+		{
+			name:           "no cached campaign status falls back to allowing spin with error",
+			cachedCampaign: nil,
+			wantCanSpin:    true,
+			wantErr:        true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			state := &AppState{}
+			if tc.cachedCampaign != nil {
+				state.CachedCampaignStatus = tc.cachedCampaign
+			}
+
+			m := &SavingSessionMonitor{
+				client: client,
+				state:  state,
+				logger: NewLogger(false),
+			}
+
+			got, err := m.canSpinWheelOfFortune()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("expected err=%v, got err=%v", tc.wantErr, err)
+			}
+			if got != tc.wantCanSpin {
+				t.Errorf("expected canSpin=%v, got %v", tc.wantCanSpin, got)
+			}
+		})
+	}
+}
